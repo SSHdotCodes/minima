@@ -124,6 +124,8 @@ def main():
     parser.add_argument("--steps", type=int, default=800)
     parser.add_argument("--minima-steps", type=int, default=0)
     parser.add_argument("--minima-learning-rate", type=float, default=1e-4)
+    parser.add_argument("--cola-minima-steps", type=int, default=0)
+    parser.add_argument("--cola-minima-learning-rate", type=float, default=0.0)
     parser.add_argument("--tasks", default=",".join(TASKS))
     parser.add_argument("--seed", type=int, default=45)
     parser.add_argument("--output", default="/tmp/minima-quality")
@@ -143,14 +145,18 @@ def main():
         "base_steps": args.steps,
         "minima_steps": minima_steps,
         "minima_learning_rate": args.minima_learning_rate,
+        "cola_minima_steps": args.cola_minima_steps or minima_steps,
+        "cola_minima_learning_rate": args.cola_minima_learning_rate or args.minima_learning_rate,
         "seed": args.seed,
         "tasks": {},
     }
     for task in selected_tasks:
+        task_steps = args.cola_minima_steps if task == "cola" and args.cola_minima_steps else minima_steps
+        task_lr = (args.cola_minima_learning_rate
+                   if task == "cola" and args.cola_minima_learning_rate else args.minima_learning_rate)
         base_score = train_one("base", args.model, args.base, task, tokenizer, args.steps, args.seed, output)
         minima_score = train_one(
-            "minima", args.model, args.base, task, tokenizer, minima_steps, args.seed, output,
-            args.minima_learning_rate,
+            "minima", args.model, args.base, task, tokenizer, task_steps, args.seed, output, task_lr,
         )
         ratio = min(1.0, minima_score / base_score) if base_score > 0 else 0.0
         results["tasks"][task] = {"base": base_score, "minima": minima_score, "capped_ratio": ratio}
