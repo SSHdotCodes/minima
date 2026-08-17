@@ -162,6 +162,15 @@
       "worst_case_usd": 5.0,
       "created_at": "2026-08-17T10:16:16.424181+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a82df70cd3824960fcbaafc"
+    },
+    {
+      "id": "6a82e052cd3824960fcbab1f",
+      "name": "cpu-release-gate-final",
+      "flavor": "cpu-performance",
+      "timeout": "1h",
+      "worst_case_usd": 1.9,
+      "created_at": "2026-08-17T10:20:02.809999+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a82e052cd3824960fcbab1f"
     }
   ]
 }
