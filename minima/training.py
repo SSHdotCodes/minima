@@ -42,6 +42,8 @@ class DistillationConfig:
     hidden_loss_weight: float = 2.0
     layerwise_hidden_loss_weight: float = 0.0
     pooled_loss_weight: float = 0.0
+    hidden_mse_loss_weight: float = 0.0
+    relational_loss_weight: float = 0.0
     distill_loss_weight: float = 1.0
     mlm_loss_weight: float = 1.0
     temperature: float = 2.0
@@ -140,11 +142,38 @@ def _masked_cosine_loss(student: torch.Tensor, teacher: torch.Tensor,
 
 def _pooled_cosine_loss(student: torch.Tensor, teacher: torch.Tensor,
                         attention_mask: torch.Tensor) -> torch.Tensor:
+    student_pooled, teacher_pooled = _pooled_vectors(student, teacher, attention_mask)
+    return (1.0 - F.cosine_similarity(student_pooled, teacher_pooled, dim=-1)).mean()
+
+
+def _pooled_vectors(student: torch.Tensor, teacher: torch.Tensor,
+                    attention_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     mask = attention_mask.unsqueeze(-1).float()
     denominator = mask.sum(dim=1).clamp_min(1)
     student_pooled = (student.float() * mask).sum(dim=1) / denominator
     teacher_pooled = (teacher.float() * mask).sum(dim=1) / denominator
-    return (1.0 - F.cosine_similarity(student_pooled, teacher_pooled, dim=-1)).mean()
+    return student_pooled, teacher_pooled
+
+
+def _masked_relative_mse_loss(student: torch.Tensor, teacher: torch.Tensor,
+                              attention_mask: torch.Tensor) -> torch.Tensor:
+    squared_error = (student.float() - teacher.float()).square().mean(dim=-1)
+    teacher_energy = teacher.float().square().mean(dim=-1).clamp_min(1.0e-6)
+    loss = squared_error / teacher_energy
+    mask = attention_mask.to(loss.dtype)
+    return (loss * mask).sum() / mask.sum().clamp_min(1)
+
+
+def _pooled_relational_loss(student: torch.Tensor, teacher: torch.Tensor,
+                            attention_mask: torch.Tensor) -> torch.Tensor:
+    student_pooled, teacher_pooled = _pooled_vectors(student, teacher, attention_mask)
+    student_pooled = F.normalize(student_pooled, dim=-1)
+    teacher_pooled = F.normalize(teacher_pooled, dim=-1)
+    difference = student_pooled @ student_pooled.t() - teacher_pooled @ teacher_pooled.t()
+    if difference.shape[0] <= 1:
+        return difference.new_zeros(())
+    off_diagonal = ~torch.eye(difference.shape[0], dtype=torch.bool, device=difference.device)
+    return difference.square()[off_diagonal].mean()
 
 
 def _set_activation_quant(model: torch.nn.Module, enabled: bool):
@@ -249,6 +278,8 @@ def distill(config: DistillationConfig) -> dict:
             "hidden": 0.0,
             "layerwise_hidden": 0.0,
             "pooled": 0.0,
+            "hidden_mse": 0.0,
+            "relational": 0.0,
             "mlm": 0.0,
             "distill": 0.0,
             "teacher_acc": 0.0,
@@ -279,6 +310,12 @@ def distill(config: DistillationConfig) -> dict:
                 student_hidden = student_output.last_hidden_state
                 hidden_loss = _masked_cosine_loss(student_hidden, teacher_hidden, attention_mask)
                 pooled_loss = _pooled_cosine_loss(student_hidden, teacher_hidden, attention_mask)
+                hidden_mse_loss = _masked_relative_mse_loss(
+                    student_hidden, teacher_hidden, attention_mask,
+                )
+                relational_loss = _pooled_relational_loss(
+                    student_hidden, teacher_hidden, attention_mask,
+                )
                 if return_hidden_states:
                     teacher_states = teacher_output.hidden_states
                     student_states = student_output.hidden_states
@@ -303,6 +340,8 @@ def distill(config: DistillationConfig) -> dict:
                     config.hidden_loss_weight * hidden_loss
                     + config.layerwise_hidden_loss_weight * layerwise_hidden_loss
                     + config.pooled_loss_weight * pooled_loss
+                    + config.hidden_mse_loss_weight * hidden_mse_loss
+                    + config.relational_loss_weight * relational_loss
                     + config.mlm_loss_weight * mlm_loss
                     + config.distill_loss_weight * distill_loss
                 ) / config.gradient_accumulation
@@ -313,6 +352,8 @@ def distill(config: DistillationConfig) -> dict:
             totals["hidden"] += hidden_loss.item() / config.gradient_accumulation
             totals["layerwise_hidden"] += layerwise_hidden_loss.item() / config.gradient_accumulation
             totals["pooled"] += pooled_loss.item() / config.gradient_accumulation
+            totals["hidden_mse"] += hidden_mse_loss.item() / config.gradient_accumulation
+            totals["relational"] += relational_loss.item() / config.gradient_accumulation
             totals["mlm"] += mlm_loss.item() / config.gradient_accumulation
             totals["distill"] += distill_loss.item() / config.gradient_accumulation
             totals["teacher_acc"] += teacher_acc / config.gradient_accumulation

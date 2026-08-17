@@ -1,7 +1,7 @@
 {
   "cap_usd": 100.0,
-  "settled_usd": 52.5,
-  "settled_note": "Conservative reconciliation through the strict group-32 radix-3 training and probe, rounded up from observed runtimes; not an invoice.",
+  "settled_usd": 52.9,
+  "settled_note": "Conservative reconciliation through the strict group-32 downstream calibration, rounded up from observed runtimes; not an invoice.",
   "settled_job_ids": [
     "6a82d264e55292eada79b306",
     "6a82d27ccd3824960fcba908",
@@ -38,7 +38,8 @@
     "6a836bfee55292eada79b95f",
     "6a83670ccd3824960fcbbfc7",
     "6a836ffbcd3824960fcbc127",
-    "6a836c2ee55292eada79b961"
+    "6a836c2ee55292eada79b961",
+    "6a83755dcd3824960fcbc1f3"
   ],
   "jobs": [
     {
