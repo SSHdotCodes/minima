@@ -144,6 +144,15 @@
       "worst_case_usd": 1.9,
       "created_at": "2026-08-17T10:11:32.448170+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a82de54cd3824960fcbaad0"
+    },
+    {
+      "id": "6a82df21e55292eada79b3b2",
+      "name": "cpu-engine-sweep",
+      "flavor": "cpu-performance",
+      "timeout": "1h",
+      "worst_case_usd": 1.9,
+      "created_at": "2026-08-17T10:14:57.547499+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a82df21e55292eada79b3b2"
     }
   ]
 }
