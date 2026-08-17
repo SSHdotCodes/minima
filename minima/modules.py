@@ -68,6 +68,7 @@ class TernaryLinear(nn.Module):
         self.out_features = out_features
         self.group_size = group_size
         self.activation_quant = activation_quant
+        self.weight_quant_strength = 1.0
         self.weight = nn.Parameter(torch.empty(out_features, in_features, device=device, dtype=dtype))
         groups = (in_features + group_size - 1) // group_size
         self.log_scale = nn.Parameter(torch.empty(out_features, groups, device=device, dtype=dtype))
@@ -107,9 +108,12 @@ class TernaryLinear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         qx = fake_quantize_activation(x, self.group_size) if self.activation_quant else x
+        quantized_weight = fake_quantize_weight(self.weight, self.group_size, self.log_scale.exp())
+        if self.weight_quant_strength < 1.0:
+            quantized_weight = self.weight + self.weight_quant_strength * (quantized_weight - self.weight)
         output = F.linear(
             qx,
-            fake_quantize_weight(self.weight, self.group_size, self.log_scale.exp()),
+            quantized_weight,
             self.bias,
         )
         if self.recovery_rank:
@@ -122,6 +126,7 @@ class TernaryEmbedding(nn.Embedding):
         super().__init__(*args, **kwargs)
         self.group_size = group_size
         self.recovery_rank = recovery_rank
+        self.weight_quant_strength = 1.0
         groups = (self.embedding_dim + group_size - 1) // group_size
         _, scale = ternary_values(self.weight, group_size)
         self.log_scale = nn.Parameter(
@@ -149,6 +154,8 @@ class TernaryEmbedding(nn.Embedding):
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         weight = fake_quantize_weight(self.weight, self.group_size, self.log_scale.exp())
+        if self.weight_quant_strength < 1.0:
+            weight = self.weight + self.weight_quant_strength * (weight - self.weight)
         output = F.embedding(input_ids, weight, self.padding_idx, self.max_norm, self.norm_type,
                              self.scale_grad_by_freq, self.sparse)
         if self.recovery_rank:
@@ -157,6 +164,8 @@ class TernaryEmbedding(nn.Embedding):
 
     def project(self, hidden: torch.Tensor) -> torch.Tensor:
         weight = fake_quantize_weight(self.weight, self.group_size, self.log_scale.exp())
+        if self.weight_quant_strength < 1.0:
+            weight = self.weight + self.weight_quant_strength * (weight - self.weight)
         output = F.linear(fake_quantize_activation(hidden, self.group_size), weight)
         if self.recovery_rank:
             output = output + F.linear(F.linear(hidden, self.recovery_b), self.recovery_a)

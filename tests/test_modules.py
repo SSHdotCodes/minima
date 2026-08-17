@@ -109,6 +109,22 @@ def test_qat_learned_scale_is_exported_without_recovery():
     assert packed.recovery_rank == 0
 
 
+def test_qat_weight_curriculum_starts_from_dense_layer():
+    torch.manual_seed(61)
+    source = nn.Linear(128, 17)
+    linear = TernaryLinear.from_float(
+        source,
+        group_size=64,
+        recovery_rank=0,
+        activation_quant=False,
+    )
+    linear.weight_quant_strength = 0.0
+    x = torch.randn(3, 128)
+    torch.testing.assert_close(linear(x), source(x))
+    linear.weight_quant_strength = 1.0
+    assert not torch.allclose(linear(x), source(x))
+
+
 def test_strict_packed_model_can_expand_for_full_weight_qat():
     torch.manual_seed(7)
     packed = PackedTernaryLinear.from_float(nn.Linear(128, 17), group_size=128)

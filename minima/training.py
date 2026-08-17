@@ -46,6 +46,7 @@ class DistillationConfig:
     log_every: int = 10
     train_ternary_weights: bool = False
     activation_warmup_steps: int = 0
+    weight_warmup_steps: int = 0
     max_weight_file_mb: float = 0.0
 
 
@@ -133,6 +134,12 @@ def _set_activation_quant(model: torch.nn.Module, enabled: bool):
             module.activation_quant = enabled
 
 
+def _set_weight_quant_strength(model: torch.nn.Module, strength: float):
+    for module in model.modules():
+        if isinstance(module, (TernaryLinear, TernaryEmbedding)):
+            module.weight_quant_strength = strength
+
+
 def distill(config: DistillationConfig) -> dict:
     from datasets import load_dataset
 
@@ -212,6 +219,9 @@ def distill(config: DistillationConfig) -> dict:
         _set_activation_quant(student, False)
 
     for step in range(config.steps):
+        if config.train_ternary_weights and config.weight_warmup_steps:
+            strength = min(1.0, (step + 1) / config.weight_warmup_steps)
+            _set_weight_quant_strength(student, strength)
         if config.train_ternary_weights and step == config.activation_warmup_steps:
             _set_activation_quant(student, True)
         totals = {"loss": 0.0, "hidden": 0.0, "mlm": 0.0, "distill": 0.0, "teacher_acc": 0.0}
