@@ -8,6 +8,7 @@ from minima.modules import (
     TernaryEmbedding,
     TernaryLinear,
 )
+from minima.tuning import enable_recovery_training
 
 
 def test_packed_linear_matches_reference():
@@ -53,6 +54,22 @@ def test_dynamic_int8_cpu_fuses_ternary_and_recovery():
     relative_mae = (actual - expected).abs().mean() / expected.abs().mean().clamp_min(1.0e-6)
     assert relative_mae < 0.03
     assert packed.packed_weight.numel() == 0
+
+
+def test_recovery_training_includes_small_non_matrix_parameters():
+    class ToyModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.projection = PackedTernaryLinear.from_float(nn.Linear(32, 16), 32, 4)
+            self.norm = nn.LayerNorm(16)
+
+    model = ToyModel()
+    count = enable_recovery_training(model)
+    expected = sum(parameter.numel() for parameter in model.projection.parameters())
+    expected += sum(parameter.numel() for parameter in model.norm.parameters())
+    assert count == expected
+    assert all(parameter.requires_grad for parameter in model.projection.parameters())
+    assert all(parameter.requires_grad for parameter in model.norm.parameters())
 
 
 def test_packed_embedding_matches_dequantized_rows():

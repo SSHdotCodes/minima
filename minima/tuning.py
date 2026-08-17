@@ -9,19 +9,37 @@ from safetensors.torch import save_file
 from transformers.modeling_outputs import SequenceClassifierOutput, TokenClassifierOutput
 
 from .modeling import MinimaModel
+from .modules import PackedTernaryEmbedding, PackedTernaryLinear
 
 
-def enable_recovery_training(model: nn.Module, fp32_master: bool = True) -> int:
-    """Freeze the packed backbone and enable only recovery adapters."""
+def enable_recovery_training(model: nn.Module, fp32_master: bool = True,
+                             include_non_matrix: bool = True) -> int:
+    """Enable recovery adapters and the small non-matrix parameter set."""
     for parameter in model.parameters():
         parameter.requires_grad_(False)
     count = 0
+    enabled: set[int] = set()
+
+    def activate(parameter):
+        nonlocal count
+        if id(parameter) in enabled:
+            return
+        if fp32_master and parameter.is_floating_point():
+            parameter.data = parameter.data.float()
+        parameter.requires_grad_(True)
+        enabled.add(id(parameter))
+        count += parameter.numel()
+
     for name, parameter in model.named_parameters():
         if name.endswith("recovery_a") or name.endswith("recovery_b"):
-            if fp32_master:
-                parameter.data = parameter.data.float()
-            parameter.requires_grad_(True)
-            count += parameter.numel()
+            activate(parameter)
+    if include_non_matrix:
+        for module in model.modules():
+            if isinstance(module, (PackedTernaryLinear, PackedTernaryEmbedding)):
+                continue
+            for parameter in module.parameters(recurse=False):
+                if parameter.is_floating_point():
+                    activate(parameter)
     if not count:
         raise ValueError("this artifact has no recovery adapters; use the quality profile or run QAT")
     return count
