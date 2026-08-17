@@ -52,7 +52,10 @@ def main():
         "tuning": "full_ternary_qat",
         "baseline_source": f"{args.baseline_repo}/{args.baseline_path}",
         "tasks": {},
+        "complete": False,
     }
+    report_file = output / "quality_gate.json"
+    api = HfApi()
     for task in tasks:
         base_score = baseline["tasks"][task]["base"]
         minima_score = train_one(
@@ -73,15 +76,24 @@ def main():
             "capped_ratio": ratio,
         }
         print(json.dumps({"task": task, **report["tasks"][task]}), flush=True)
+        report["completed_tasks"] = len(report["tasks"])
+        report_file.write_text(json.dumps(report, indent=2) + "\n")
+        api.upload_file(
+            repo_id=args.results_repo,
+            repo_type="dataset",
+            path_or_fileobj=report_file,
+            path_in_repo=args.results_path,
+            commit_message=f"Checkpoint strict quality gate after {task}",
+        )
     report["relative_mean"] = float(np.mean([
         item["capped_ratio"] for item in report["tasks"].values()
     ]))
     report["threshold"] = args.threshold
     report["passed"] = report["relative_mean"] >= report["threshold"]
-    report_file = output / "quality_gate.json"
+    report["complete"] = True
     report_file.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)
-    HfApi().upload_file(
+    api.upload_file(
         repo_id=args.results_repo,
         repo_type="dataset",
         path_or_fileobj=report_file,
