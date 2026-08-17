@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-import types
+import os
 
 import torch
 import torch.nn as nn
@@ -19,7 +19,12 @@ from .quantization import (
 
 def _dynamic_int8_linear(weight: torch.Tensor, bias: torch.Tensor | None) -> nn.Module:
     """Pack an effective FP32 matrix for PyTorch's optimized dynamic INT8 GEMM."""
-    if torch.backends.quantized.engine == "none":
+    requested_engine = os.environ.get("MINIMA_QUANTIZED_ENGINE")
+    if requested_engine:
+        if requested_engine not in torch.backends.quantized.supported_engines:
+            raise RuntimeError(f"unsupported quantized engine: {requested_engine}")
+        torch.backends.quantized.engine = requested_engine
+    elif torch.backends.quantized.engine == "none":
         for engine in ("x86", "fbgemm", "qnnpack"):
             if engine in torch.backends.quantized.supported_engines:
                 torch.backends.quantized.engine = engine
@@ -302,30 +307,9 @@ class PackedTernaryEmbedding(nn.Module):
 
 
 def optimize_cpu_model(model: nn.Module) -> nn.Module:
-    """Fuse LFM gated MLP pairs, then optimize every remaining projection."""
-    consumed: set[int] = set()
+    """Optimize each packed projection for the selected dynamic INT8 engine."""
     for module in list(model.modules()):
-        w1, w3 = getattr(module, "w1", None), getattr(module, "w3", None)
-        if not isinstance(w1, PackedTernaryLinear) or not isinstance(w3, PackedTernaryLinear):
-            continue
-        if w1.bias is not None or w3.bias is not None:
-            continue
-        gate_up = _dynamic_int8_linear(
-            torch.cat((w1.effective_cpu_weight(), w3.effective_cpu_weight()), dim=0), None,
-        )
-        split = w1.out_features
-        object.__setattr__(module, "_minima_cpu_gate_up", gate_up)
-
-        def _cpu_mlp_forward(this, x, *, _split=split):
-            gate, up = this._minima_cpu_gate_up(x).split(_split, dim=-1)
-            return this.w2(F.silu(gate) * up)
-
-        module.forward = types.MethodType(_cpu_mlp_forward, module)
-        w1.release_cpu_source()
-        w3.release_cpu_source()
-        consumed.update((id(w1), id(w3)))
-    for module in list(model.modules()):
-        if isinstance(module, PackedTernaryLinear) and id(module) not in consumed:
+        if isinstance(module, PackedTernaryLinear):
             module.optimize_cpu(release_source=True)
         elif isinstance(module, PackedTernaryEmbedding):
             module._cpu_fast_project = True
