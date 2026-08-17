@@ -22,6 +22,7 @@ from .tuning import cast_recovery_parameters
 @dataclass
 class DistillationConfig:
     model: str = "LiquidAI/LFM2.5-Encoder-350M"
+    student_model: str | None = None
     dataset: str = "HuggingFaceFW/fineweb-edu"
     dataset_config: str | None = "sample-10BT"
     split: str = "train"
@@ -145,20 +146,31 @@ def distill(config: DistillationConfig) -> dict:
     tokenizer = AutoTokenizer.from_pretrained(config.model, trust_remote_code=True)
     teacher = load_lfm_encoder(config.model, torch_dtype=torch.bfloat16,
                                attn_implementation="sdpa").to(device).eval()
-    student_source = load_lfm_encoder(
-        config.model,
-        torch_dtype=torch.float32 if config.train_ternary_weights else torch.float16,
-        attn_implementation="sdpa",
-    ).to(device)
     packed_student = None
-    if config.train_ternary_weights:
-        student = prepare_qat(student_source, config.group_size, config.recovery_rank, include_embeddings=True)
+    if config.student_model:
+        if not config.train_ternary_weights or config.recovery_rank:
+            raise ValueError("strict checkpoint continuation requires full-weight QAT and recovery_rank=0")
+        resumed = MinimaModel.from_pretrained(config.student_model, device=device)
+        if any(descriptor.get("recovery_rank", 0)
+               for descriptor in resumed.minima_metadata["modules"].values()):
+            raise ValueError("cannot continue strict QAT from an artifact with recovery adapters")
+        student = resumed.prepare_qat().model.float()
     else:
-        packed_student = MinimaModel.from_model(
-            student_source, base_model=config.model, model_kind="encoder",
-            group_size=config.group_size, recovery_rank=config.recovery_rank,
-        )
-        student = packed_student.model.to(device)
+        student_source = load_lfm_encoder(
+            config.model,
+            torch_dtype=torch.float32 if config.train_ternary_weights else torch.float16,
+            attn_implementation="sdpa",
+        ).to(device)
+        if config.train_ternary_weights:
+            student = prepare_qat(
+                student_source, config.group_size, config.recovery_rank, include_embeddings=True,
+            )
+        else:
+            packed_student = MinimaModel.from_model(
+                student_source, base_model=config.model, model_kind="encoder",
+                group_size=config.group_size, recovery_rank=config.recovery_rank,
+            )
+            student = packed_student.model.to(device)
     for name, parameter in student.named_parameters():
         parameter.requires_grad_(config.train_ternary_weights or "recovery_" in name)
         if parameter.requires_grad and not config.train_ternary_weights:
