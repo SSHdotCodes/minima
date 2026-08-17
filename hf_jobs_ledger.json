@@ -264,6 +264,15 @@
       "worst_case_usd": 1.6667,
       "created_at": "2026-08-17T18:09:56.850381+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a834e74e55292eada79b848"
+    },
+    {
+      "id": "6a835034e55292eada79b851",
+      "name": "strict-g64-progressive-qat",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T18:17:24.679200+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a835034e55292eada79b851"
     }
   ]
 }
