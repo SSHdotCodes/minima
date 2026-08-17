@@ -15,7 +15,13 @@ from datasets import load_dataset
 from huggingface_hub import HfApi
 from sklearn.metrics import f1_score, matthews_corrcoef
 from scipy.stats import spearmanr
-from transformers import AutoTokenizer, DataCollatorWithPadding, Trainer, TrainingArguments
+from transformers import (
+    AutoTokenizer,
+    DataCollatorWithPadding,
+    Trainer,
+    TrainingArguments,
+    get_linear_schedule_with_warmup,
+)
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 from minima.loading import load_lfm_encoder
@@ -65,7 +71,7 @@ def score(metric, logits, labels):
 
 
 def train_one(kind, model_id, base_id, task, tokenizer, max_steps, seed, output_root,
-              learning_rate_override=None):
+              learning_rate_override=None, head_learning_rate_override=None):
     text_a, text_b, validation_split, num_labels, metric = TASKS[task]
     raw = load_dataset("nyu-mll/glue", task)
 
@@ -115,8 +121,29 @@ def train_one(kind, model_id, base_id, task, tokenizer, max_steps, seed, output_
         seed=seed,
         remove_unused_columns=False,
     )
-    trainer = Trainer(model=model, args=args, train_dataset=prepared["train"],
-                      data_collator=DataCollatorWithPadding(tokenizer), processing_class=tokenizer)
+    trainer_options = {}
+    if kind != "base" and head_learning_rate_override is not None:
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": model.encoder.parameters(), "lr": learning_rate},
+                {"params": model.classifier.parameters(), "lr": head_learning_rate_override},
+            ],
+            weight_decay=args.weight_decay,
+        )
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=max_steps,
+        )
+        trainer_options["optimizers"] = (optimizer, scheduler)
+    trainer = Trainer(
+        model=model,
+        args=args,
+        train_dataset=prepared["train"],
+        data_collator=DataCollatorWithPadding(tokenizer),
+        processing_class=tokenizer,
+        **trainer_options,
+    )
     trainer.train()
     prediction = trainer.predict(prepared[validation_split])
     result = score(metric, prediction.predictions, prediction.label_ids)

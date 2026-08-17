@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--results-path", default="strict/quality_gate.json")
     parser.add_argument("--steps", type=int, default=800)
     parser.add_argument("--learning-rate", type=float, default=1e-5)
+    parser.add_argument("--head-learning-rate", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=45)
     parser.add_argument("--threshold", type=float, default=0.96)
     parser.add_argument("--tasks", default=",".join(TASKS))
@@ -49,6 +50,7 @@ def main():
         "seed": args.seed,
         "steps": args.steps,
         "learning_rate": args.learning_rate,
+        "head_learning_rate": args.head_learning_rate,
         "tuning": "full_ternary_qat",
         "baseline_source": f"{args.baseline_repo}/{args.baseline_path}",
         "tasks": {},
@@ -68,6 +70,7 @@ def main():
             args.seed,
             output,
             args.learning_rate,
+            args.head_learning_rate,
         )
         ratio = min(1.0, minima_score / base_score) if base_score > 0 else 0.0
         report["tasks"][task] = {
