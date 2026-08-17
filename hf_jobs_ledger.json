@@ -1,7 +1,7 @@
 {
   "cap_usd": 100.0,
-  "settled_usd": 48.5,
-  "settled_note": "Conservative reconciliation through the group-64-v2 task calibration plus the 8-second failed group-32 setup, rounded up from observed runtimes; not an invoice.",
+  "settled_usd": 52.5,
+  "settled_note": "Conservative reconciliation through the strict group-32 radix-3 training and probe, rounded up from observed runtimes; not an invoice.",
   "settled_job_ids": [
     "6a82d264e55292eada79b306",
     "6a82d27ccd3824960fcba908",
@@ -37,7 +37,8 @@
     "6a83656fe55292eada79b925",
     "6a836bfee55292eada79b95f",
     "6a83670ccd3824960fcbbfc7",
-    "6a836ffbcd3824960fcbc127"
+    "6a836ffbcd3824960fcbc127",
+    "6a836c2ee55292eada79b961"
   ],
   "jobs": [
     {
@@ -363,6 +364,15 @@
       "worst_case_usd": 1.25,
       "created_at": "2026-08-17T20:32:59.450820+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a836ffbcd3824960fcbc127"
+    },
+    {
+      "id": "6a83755dcd3824960fcbc1f3",
+      "name": "g32-base3-rate-calibration",
+      "flavor": "h200",
+      "timeout": "15m",
+      "worst_case_usd": 1.25,
+      "created_at": "2026-08-17T20:55:57.851986+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a83755dcd3824960fcbc1f3"
     }
   ]
 }
