@@ -1,8 +1,10 @@
-"""Ternary quantization and I2_S packing.
+"""Ternary quantization and packed storage formats.
 
 The logical values are {-1, 0, +1}, i.e. log2(3) = 1.585 bits of information.
 The hot inference representation follows BitNet's I2_S convention and uses two
 physical bits per trit so SIMD kernels can unpack four weights with shifts/masks.
+For checkpoints where scale density is more valuable, radix-3 storage packs five
+trits per byte and is expanded to I2_S once when the model is loaded.
 """
 
 from __future__ import annotations
@@ -104,6 +106,66 @@ def unpack_i2s(packed: torch.Tensor, cols: int, group_size: int = 128) -> torch.
     codes = torch.stack(tuple((packed >> shift) & 0x03 for shift in (0, 2, 4, 6)), dim=2)
     values = codes.to(torch.int8).sub_(1).reshape(rows, groups * group_size)
     return values[:, :cols].contiguous()
+
+
+def pack_base3(trits: torch.Tensor, group_size: int = 128) -> torch.Tensor:
+    """Pack five contiguous {-1,0,+1} values into each radix-3 byte.
+
+    Groups remain independently addressable. If a group is not divisible by
+    five, its final byte is padded with logical zeros (base-3 digit one).
+    """
+    if trits.ndim != 2:
+        raise ValueError("trits must be a 2D tensor")
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+    rows, cols = trits.shape
+    if cols % group_size:
+        raise ValueError("padded input width must be divisible by group_size")
+    codes = trits.to(torch.int16) + 1
+    if bool(((codes < 0) | (codes > 2)).any()):
+        raise ValueError("trits may only contain -1, 0, or +1")
+    groups = cols // group_size
+    bytes_per_group = (group_size + 4) // 5
+    padded_group = bytes_per_group * 5
+    codes = codes.view(rows, groups, group_size)
+    if padded_group != group_size:
+        codes = torch.nn.functional.pad(codes, (0, padded_group - group_size), value=1)
+    powers = torch.tensor((1, 3, 9, 27, 81), dtype=torch.int16, device=codes.device)
+    return (
+        (codes.view(rows, groups, bytes_per_group, 5) * powers)
+        .sum(dim=-1)
+        .to(torch.uint8)
+        .contiguous()
+    )
+
+
+def unpack_base3(packed: torch.Tensor, cols: int, group_size: int = 128) -> torch.Tensor:
+    """Unpack radix-3 bytes to an int8 matrix and remove right padding."""
+    if packed.ndim != 3:
+        raise ValueError("packed weights must have shape [rows, groups, ceil(group_size/5)]")
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+    rows, groups, bytes_per_group = packed.shape
+    if bytes_per_group != (group_size + 4) // 5:
+        raise ValueError("packed shape and group_size disagree")
+    if bool((packed > 242).any()):
+        raise ValueError("radix-3 bytes must be in the range 0..242")
+    work = packed.to(torch.int16)
+    digits = torch.stack(tuple((work // power) % 3 for power in (1, 3, 9, 27, 81)), dim=-1)
+    values = digits.to(torch.int8).sub_(1).view(rows, groups, bytes_per_group * 5)
+    return values[:, :, :group_size].reshape(rows, groups * group_size)[:, :cols].contiguous()
+
+
+def i2s_to_base3(packed: torch.Tensor, group_size: int) -> torch.Tensor:
+    """Transcode a runtime I2_S tensor into compact checkpoint storage."""
+    cols = packed.shape[1] * group_size
+    return pack_base3(unpack_i2s(packed, cols, group_size), group_size)
+
+
+def base3_to_i2s(packed: torch.Tensor, group_size: int) -> torch.Tensor:
+    """Expand compact checkpoint storage into the SIMD-friendly runtime form."""
+    cols = packed.shape[1] * group_size
+    return pack_i2s(unpack_base3(packed, cols, group_size), group_size)
 
 
 def quantize_ternary(weight: torch.Tensor, group_size: int = 128,

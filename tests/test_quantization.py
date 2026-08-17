@@ -2,10 +2,14 @@ import torch
 
 from minima.quantization import (
     QuantizedWeight,
+    base3_to_i2s,
     dequantize,
     fake_quantize_weight,
+    i2s_to_base3,
+    pack_base3,
     pack_i2s,
     quantize_ternary,
+    unpack_base3,
     unpack_i2s,
 )
 
@@ -16,6 +20,17 @@ def test_i2s_roundtrip_multiple_groups():
     packed = pack_i2s(values, 128)
     assert packed.shape == (7, 2, 32)
     torch.testing.assert_close(unpack_i2s(packed, 256, 128), values)
+
+
+def test_base3_roundtrip_and_i2s_transcode_group32():
+    torch.manual_seed(11)
+    values = torch.randint(-1, 2, (7, 96), dtype=torch.int8)
+    packed = pack_base3(values, 32)
+    assert packed.shape == (7, 3, 7)
+    assert packed.max() <= 242
+    torch.testing.assert_close(unpack_base3(packed, 96, 32), values)
+    i2s = pack_i2s(values, 32)
+    torch.testing.assert_close(base3_to_i2s(i2s_to_base3(i2s, 32), 32), i2s)
 
 
 def test_quantization_padding_and_dequantization():

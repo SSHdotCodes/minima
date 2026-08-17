@@ -20,10 +20,31 @@ from .modules import (
     TernaryLinear,
     optimize_cpu_model,
 )
-from .quantization import QuantizedWeight, dequantize
+from .quantization import QuantizedWeight, base3_to_i2s, dequantize, i2s_to_base3
 from .spellcheck import patch_tied_vocab_projection
 
 FORMAT_VERSION = 1
+STORAGE_FORMATS = {"i2_s", "base3"}
+
+
+def _storage_format(metadata: dict[str, Any]) -> str:
+    value = metadata.get("storage_format", "i2_s")
+    if value not in STORAGE_FORMATS:
+        raise ValueError(f"unsupported Minima storage format {value!r}")
+    return value
+
+
+def _transcode_packed_state(tensors: dict[str, torch.Tensor], metadata: dict[str, Any], *,
+                            loading: bool) -> dict[str, torch.Tensor]:
+    """Transcode compact checkpoint tensors without changing runtime modules."""
+    if _storage_format(metadata) == "i2_s":
+        return tensors
+    convert = base3_to_i2s if loading else i2s_to_base3
+    for path, descriptor in metadata["modules"].items():
+        key = f"{path}.packed_weight"
+        if key in tensors:
+            tensors[key] = convert(tensors[key], descriptor["group_size"])
+    return tensors
 
 
 def _parent_and_name(root: nn.Module, path: str) -> tuple[nn.Module, str]:
@@ -216,15 +237,21 @@ class MinimaModel(nn.Module):
     @classmethod
     def from_model(cls, model: nn.Module, *, base_model: str, model_kind: str = "encoder",
                    group_size: int = 128, recovery_rank: int = 0,
-                   include_embeddings: bool = True) -> "MinimaModel":
+                   include_embeddings: bool = True, storage_format: str = "i2_s") -> "MinimaModel":
+        if storage_format not in STORAGE_FORMATS:
+            raise ValueError(f"unsupported Minima storage format {storage_format!r}")
         model, descriptors = pack_model(model, group_size, recovery_rank, include_embeddings)
         if model_kind == "spellchecker":
             patch_tied_vocab_projection(model)
         metadata = {
             "format_version": FORMAT_VERSION,
             "format": "i2_s",
+            "storage_format": storage_format,
             "logical_weight_bits": 1.585,
-            "physical_weight_bits": 2,
+            "physical_weight_bits": (
+                2 if storage_format == "i2_s" else 8 * ((group_size + 4) // 5) / group_size
+            ),
+            "runtime_weight_bits": 2,
             "activation_bits": 8,
             "base_model": base_model,
             "base_revision": getattr(getattr(model, "config", None), "_commit_hash", None),
@@ -262,6 +289,7 @@ class MinimaModel(nn.Module):
             parent, name = _parent_and_name(model, path)
             setattr(parent, name, _empty_packed(descriptor))
         state = load_file(str(source / "model.safetensors"), device="cpu")
+        state = _transcode_packed_state(state, metadata, loading=True)
         missing, unexpected = model.load_state_dict(state, strict=False, assign=True)
         if missing or unexpected:
             raise RuntimeError(f"artifact state mismatch: missing={missing}, unexpected={unexpected}")
@@ -299,9 +327,21 @@ class MinimaModel(nn.Module):
         output = Path(output_dir)
         output.mkdir(parents=True, exist_ok=True)
         (output / "minima_config.json").write_text(json.dumps(self.minima_metadata, indent=2) + "\n")
-        tensors = {name: value.detach().cpu().contiguous().clone()
-                   for name, value in self.model.state_dict().items()}
-        save_file(tensors, str(output / "model.safetensors"), metadata={"format": "minima-i2s-v1"})
+        tensors = {
+            name: (
+                value.detach().to(device="cpu", dtype=torch.float16).contiguous().clone()
+                if name.endswith(".weight_scale")
+                else value.detach().cpu().contiguous().clone()
+            )
+            for name, value in self.model.state_dict().items()
+        }
+        tensors = _transcode_packed_state(tensors, self.minima_metadata, loading=False)
+        storage = _storage_format(self.minima_metadata)
+        save_file(
+            tensors,
+            str(output / "model.safetensors"),
+            metadata={"format": f"minima-{storage}-v1"},
+        )
         if tokenizer is None:
             tokenizer = AutoTokenizer.from_pretrained(self.minima_metadata["base_model"], trust_remote_code=True)
         tokenizer.save_pretrained(output)
@@ -321,7 +361,8 @@ class MinimaModel(nn.Module):
                 "This repository stores a packed ternary model for "
                 "[SSHDotCodes/minima](https://github.com/SSHDotCodes/minima). "
                 "Install that package and load it with `MinimaModel.from_pretrained(...)`.\n\n"
-                "Matrix weights use logical {-1, 0, +1} values in the I2_S runtime format. "
+                "Matrix weights use logical {-1, 0, +1} values with compact checkpoint storage "
+                "and the I2_S runtime format. "
                 "See `minima_config.json` for the exact group size, recovery rank, and context limit.\n"
             )
 
