@@ -46,9 +46,17 @@ def ternary_values(weight: torch.Tensor, group_size: int = 128) -> tuple[torch.T
     if padded_cols != cols:
         valid[..., -(padded_cols - cols) :] = 0
     denom = valid.sum(dim=-1).clamp_min(1)
-    scale = (view.abs() * valid).sum(dim=-1) / denom
+    absolute = view.abs()
+    scale = (absolute * valid).sum(dim=-1) / denom
     scale = scale.clamp_min(torch.finfo(torch.float32).eps)
-    trits = torch.round(view / scale.unsqueeze(-1)).clamp_(-1, 1).to(torch.int8)
+    # Lloyd-Max updates minimize per-group squared reconstruction error for a
+    # symmetric three-level codebook {-scale, 0, +scale}. Three iterations are
+    # enough for stable partitions at these small group sizes.
+    for _ in range(3):
+        nonzero = (absolute >= scale.unsqueeze(-1) * 0.5) & valid.bool()
+        scale = (absolute * nonzero).sum(dim=-1) / nonzero.sum(dim=-1).clamp_min(1)
+        scale = scale.clamp_min(torch.finfo(torch.float32).eps)
+    trits = (view.sign() * nonzero).to(torch.int8)
     trits = trits * valid.to(torch.int8)
     return trits.view(rows, padded_cols), scale
 
@@ -118,8 +126,13 @@ def fake_quantize_weight(weight: torch.Tensor, group_size: int = 128) -> torch.T
     padded_cols = groups * group_size
     work = weight if cols == padded_cols else torch.nn.functional.pad(weight, (0, padded_cols - cols))
     view = work.view(rows, groups, group_size)
-    scale = view.detach().abs().mean(dim=-1, keepdim=True).clamp_min(1e-8)
-    quant = torch.round(view / scale).clamp(-1, 1) * scale
+    absolute = view.detach().abs()
+    scale = absolute.mean(dim=-1, keepdim=True).clamp_min(1e-8)
+    for _ in range(3):
+        nonzero = absolute >= scale * 0.5
+        scale = ((absolute * nonzero).sum(dim=-1, keepdim=True) /
+                 nonzero.sum(dim=-1, keepdim=True).clamp_min(1)).clamp_min(1e-8)
+    quant = view.sign() * nonzero * scale
     quant = view + (quant - view).detach()
     return quant.view(rows, padded_cols)[:, :cols]
 
@@ -135,4 +148,3 @@ def fake_quantize_activation(x: torch.Tensor, group_size: int = 128) -> torch.Te
     quant = torch.round(view / scale).clamp(-127, 127) * scale
     quant = view + (quant - view).detach()
     return quant.view(*work.shape)[:, :cols] if work.ndim == 2 else quant.view(*work.shape)[..., :cols]
-

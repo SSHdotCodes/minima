@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
 
 from .loading import load_lfm_encoder
 from .modeling import MinimaModel, prepare_qat
-from .modules import TernaryEmbedding
+from .modules import PackedTernaryEmbedding, TernaryEmbedding
 from .quantization import fake_quantize_weight
 
 
@@ -34,7 +34,7 @@ class DistillationConfig:
     learning_rate: float = 2e-4
     warmup_steps: int = 200
     group_size: int = 128
-    recovery_rank: int = 8
+    recovery_rank: int = 64
     teacher_topk: int = 32
     hidden_loss_weight: float = 2.0
     distill_loss_weight: float = 1.0
@@ -70,7 +70,10 @@ def _mask_tokens(input_ids: torch.Tensor, attention_mask: torch.Tensor, tokenize
     return corrupted, labels
 
 
-def _selected_student_rows(embedding: TernaryEmbedding, ids: torch.Tensor) -> torch.Tensor:
+def _selected_student_rows(embedding: TernaryEmbedding | PackedTernaryEmbedding,
+                           ids: torch.Tensor) -> torch.Tensor:
+    if isinstance(embedding, PackedTernaryEmbedding):
+        return embedding.selected_rows(ids, torch.float32)
     rows = embedding.weight.index_select(0, ids.reshape(-1)).view(*ids.shape, embedding.embedding_dim)
     rows = fake_quantize_weight(rows.reshape(-1, embedding.embedding_dim), embedding.group_size).view_as(rows)
     if embedding.recovery_rank:
@@ -80,7 +83,7 @@ def _selected_student_rows(embedding: TernaryEmbedding, ids: torch.Tensor) -> to
 
 
 def _candidate_loss(student_hidden: torch.Tensor, teacher_hidden: torch.Tensor, labels: torch.Tensor,
-                    student_embedding: TernaryEmbedding, teacher_weight: torch.Tensor, topk: int,
+    student_embedding: TernaryEmbedding | PackedTernaryEmbedding, teacher_weight: torch.Tensor, topk: int,
                     temperature: float) -> tuple[torch.Tensor, torch.Tensor, float]:
     positions = labels.ne(-100)
     targets = labels[positions]
@@ -130,9 +133,20 @@ def distill(config: DistillationConfig) -> dict:
     tokenizer = AutoTokenizer.from_pretrained(config.model, trust_remote_code=True)
     teacher = load_lfm_encoder(config.model, torch_dtype=torch.bfloat16,
                                attn_implementation="sdpa").to(device).eval()
-    student = load_lfm_encoder(config.model, torch_dtype=torch.float32,
-                               attn_implementation="sdpa").to(device)
-    prepare_qat(student, config.group_size, config.recovery_rank, include_embeddings=True)
+    student_source = load_lfm_encoder(
+        config.model,
+        torch_dtype=torch.float32 if config.train_ternary_weights else torch.float16,
+        attn_implementation="sdpa",
+    ).to(device)
+    packed_student = None
+    if config.train_ternary_weights:
+        student = prepare_qat(student_source, config.group_size, config.recovery_rank, include_embeddings=True)
+    else:
+        packed_student = MinimaModel.from_model(
+            student_source, base_model=config.model, model_kind="encoder",
+            group_size=config.group_size, recovery_rank=config.recovery_rank,
+        )
+        student = packed_student.model.to(device)
     for name, parameter in student.named_parameters():
         parameter.requires_grad_(config.train_ternary_weights or "recovery_" in name)
     trainable = [parameter for parameter in student.parameters() if parameter.requires_grad]
@@ -151,7 +165,7 @@ def distill(config: DistillationConfig) -> dict:
                         pin_memory=True)
     iterator = iter(loader)
     student_embedding = student.get_input_embeddings()
-    if not isinstance(student_embedding, TernaryEmbedding):
+    if not isinstance(student_embedding, (TernaryEmbedding, PackedTernaryEmbedding)):
         raise TypeError("QAT preparation did not replace the input embedding")
     teacher_weight = teacher.get_input_embeddings().weight
     started = time.time()
@@ -201,8 +215,12 @@ def distill(config: DistillationConfig) -> dict:
             print(json.dumps(record), flush=True)
 
     output = Path(config.output_dir)
-    model = MinimaModel.from_model(student.eval(), base_model=config.model, model_kind="encoder",
-                                   group_size=config.group_size, recovery_rank=config.recovery_rank)
+    if packed_student is None:
+        model = MinimaModel.from_model(student.eval(), base_model=config.model, model_kind="encoder",
+                                       group_size=config.group_size, recovery_rank=config.recovery_rank)
+    else:
+        packed_student.model = student.eval()
+        model = packed_student
     model.save_pretrained(output, tokenizer)
     report = {
         "config": config.__dict__,

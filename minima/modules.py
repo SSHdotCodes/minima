@@ -208,12 +208,15 @@ class PackedTernaryEmbedding(nn.Module):
         values = dequantize(qweight, device=rows.device, dtype=dtype)
         return values.view(*rows.shape, self.embedding_dim)
 
+    def selected_rows(self, rows: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+        output = self._rows(rows, dtype)
+        if self.recovery_a is not None:
+            output = output + F.embedding(rows, self.recovery_a.to(dtype)) @ self.recovery_b.to(dtype)
+        return output
+
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         dtype = torch.get_default_dtype() if self.weight_scale.device.type == "cpu" else torch.float16
-        output = self._rows(input_ids, dtype)
-        if self.recovery_a is not None:
-            output = output + F.embedding(input_ids, self.recovery_a.to(dtype)) @ self.recovery_b.to(dtype)
-        return output
+        return self.selected_rows(input_ids, dtype)
 
     def project(self, hidden: torch.Tensor) -> torch.Tensor:
         if self.training and torch.is_grad_enabled():

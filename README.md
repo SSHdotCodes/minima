@@ -14,7 +14,7 @@ task-tuning tools, and a spellchecker reference fine-tune.
 
 BitNet b1.58 models use ternary matrix weights and int8 activations. Directly
 rounding a conventionally trained encoder often loses too much quality, so Minima
-uses teacher distillation and tiny rank-8 recovery adapters around a packed ternary
+uses teacher distillation and compact rank-64 recovery adapters around a packed ternary
 backbone. The strict no-adapter profile remains available as an ablation.
 
 - Logical matrix weights: `{-1, 0, +1}` (`log2(3) = 1.585` bits)
@@ -51,7 +51,7 @@ The first CPU use compiles a small PyTorch C++ extension and caches it. Set
 minima-convert LiquidAI/LFM2.5-Encoder-350M ./minima-ptq --group-size 128
 
 minima-train \
-  --steps 4000 --sequence-length 512 --recovery-rank 8 \
+  --steps 4000 --sequence-length 512 --recovery-rank 64 \
   --output-repo ProCreations/minima
 
 minima-benchmark ProCreations/minima \
@@ -76,4 +76,3 @@ Source code is MIT. Microsoft BitNet inspiration and attribution are in [NOTICE]
 Derived LiquidAI weights remain under the LFM Open License v1.0, including its
 commercial-use revenue threshold; see [MODEL_LICENSE](MODEL_LICENSE) and the full
 license shipped with each model artifact.
-

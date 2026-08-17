@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 import torch
 import torch.nn as nn
-from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoModel, AutoModelForMaskedLM, AutoTokenizer
 
@@ -196,6 +197,23 @@ class MinimaModel(nn.Module):
         if tokenizer is None:
             tokenizer = AutoTokenizer.from_pretrained(self.minima_metadata["base_model"], trust_remote_code=True)
         tokenizer.save_pretrained(output)
+        try:
+            license_path = hf_hub_download(self.minima_metadata["base_model"], "LICENSE")
+            shutil.copyfile(license_path, output / "LICENSE")
+        except Exception as exc:
+            raise RuntimeError("the upstream model LICENSE is required in every derived artifact") from exc
+        readme = output / "README.md"
+        if not readme.exists():
+            readme.write_text(
+                "---\nlicense: lfm1.0\nlibrary_name: minima-lfm\n"
+                f"base_model: {self.minima_metadata['base_model']}\n---\n\n"
+                "# Minima W1.58A8 artifact\n\n"
+                "This repository stores a packed ternary model for "
+                "[SSHDotCodes/minima](https://github.com/SSHDotCodes/minima). "
+                "Install that package and load it with `MinimaModel.from_pretrained(...)`.\n\n"
+                "Matrix weights use logical {-1, 0, +1} values in the I2_S runtime format. "
+                "See `minima_config.json` for the exact group size, recovery rank, and context limit.\n"
+            )
 
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)

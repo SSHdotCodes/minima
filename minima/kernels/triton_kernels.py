@@ -56,13 +56,17 @@ def triton_i2s_linear(x: torch.Tensor, packed: torch.Tensor, scale: torch.Tensor
     if k != in_features or quarter * 4 != group_size:
         raise ValueError("incompatible input or packed-weight shape")
     out = torch.empty((m, n), device=x.device, dtype=x.dtype)
-    block_m, block_n, block_k = 32, 32, 32
+    # A full quantization group per K tile amortizes scale loads and lets
+    # tl.dot feed tensor cores with substantially larger tiles. Smaller M
+    # tiles avoid wasting work for short, single-sequence encoder calls.
+    block_m = 32 if m < 256 else 64
+    block_n, block_k = 64, group_size
     grid = (triton.cdiv(m, block_m), triton.cdiv(n, block_n))
     _i2s_gemm[grid](
         x, packed, scale, out, m, n, k, groups, quarter, group_size,
         x.stride(0), x.stride(1), packed.stride(0), packed.stride(1), packed.stride(2),
         scale.stride(0), scale.stride(1), out.stride(0), out.stride(1),
         BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=block_k,
+        num_warps=8, num_stages=3,
     )
     return out
-
