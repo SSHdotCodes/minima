@@ -33,6 +33,7 @@ class SpellDistillationConfig:
     group_size: int = 32
     recovery_rank: int = 128
     topk: int = 16
+    eval_batches: int = 8
     seed: int = 77
     log_every: int = 10
 
@@ -183,22 +184,58 @@ def distill_spellchecker(config: SpellDistillationConfig) -> dict:
     packed.model = student.eval()
     output = Path(config.output_dir)
     packed.save_pretrained(output, tokenizer)
+    label_matches = detect_matches = valid_tokens = 0
+    held_out = []
+    with torch.inference_mode():
+        for _ in range(config.eval_batches):
+            input_ids, attention_mask = next(iterator)
+            input_ids = input_ids.to(device, non_blocking=True)
+            attention_mask = attention_mask.to(device, non_blocking=True)
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                teacher_output = teacher(input_ids=input_ids, attention_mask=attention_mask)
+                _, candidate_ids = teacher_output["label_logits"].topk(config.topk, dim=-1)
+                student_hidden = _last_hidden(student, input_ids, attention_mask)
+                student_candidates = _candidate_logits(student, student_hidden, candidate_ids)
+                student_detect = student.detect_head(student_hidden)
+            mask = attention_mask.bool()
+            label_matches += student_candidates.argmax(-1)[mask].eq(0).sum().item()
+            detect_matches += student_detect.argmax(-1)[mask].eq(
+                teacher_output["detect_logits"].argmax(-1)[mask]
+            ).sum().item()
+            valid_tokens += mask.sum().item()
+            held_out.extend(tokenizer.batch_decode(input_ids, skip_special_tokens=True))
+
     examples = [
         "She go to school every day .",
         "I has went to the stor yesterday .",
         "Their are many reason to study hard .",
         "That 's a fair point , let 's discuss it tomorrow .",
     ]
+    evaluation_texts = examples + held_out
     with torch.inference_mode():
-        teacher_corrections = teacher.correct(examples, max_iter=4, min_error_prob=0.0)
-        student_corrections = student.correct(examples, max_iter=4, min_error_prob=0.0)
+        # The upstream optional reranker contains a second 1.42 GB dense
+        # encoder. Tagger-only evaluation measures the packed model itself and
+        # preserves the memory contract of the Minima demo.
+        teacher_corrections = teacher.correct(
+            evaluation_texts, max_iter=4, min_error_prob=0.0, rerank=False,
+        )
+        student_corrections = student.correct(
+            evaluation_texts, max_iter=4, min_error_prob=0.0, rerank=False,
+        )
+    example_teacher = teacher_corrections[:len(examples)]
+    example_student = student_corrections[:len(examples)]
+    correction_agreement = sum(a == b for a, b in zip(teacher_corrections, student_corrections))
     report = {
         "config": config.__dict__,
         "duration_seconds": time.time() - started,
         "trainable_parameters": trainable_count,
-        "example_exact_agreement": sum(a == b for a, b in zip(teacher_corrections, student_corrections)) / len(examples),
+        "tagger_label_top1_candidate_agreement": label_matches / max(1, valid_tokens),
+        "detection_top1_agreement": detect_matches / max(1, valid_tokens),
+        "correction_exact_agreement": correction_agreement / len(evaluation_texts),
+        "correction_evaluation_examples": len(evaluation_texts),
+        "example_exact_agreement": sum(a == b for a, b in zip(example_teacher, example_student)) / len(examples),
         "examples": [{"input": text, "teacher": a, "minima": b}
-                     for text, a, b in zip(examples, teacher_corrections, student_corrections)],
+                     for text, a, b in zip(examples, example_teacher, example_student)],
         "history": history,
     }
     (output / "spellcheck_report.json").write_text(json.dumps(report, indent=2) + "\n")

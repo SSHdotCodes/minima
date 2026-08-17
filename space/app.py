@@ -28,7 +28,11 @@ def correct(text: str, precision: float, passes: int):
         return "", "Enter text to check."
     prepared = whitespace_tokenize(text[:8000])
     start = time.perf_counter()
-    result = model.correct([prepared], min_error_prob=precision, max_iter=int(passes))[0]
+    # The reference model's optional reranker is a second 1.42 GB dense
+    # encoder. Keep this CPU demo on the packed tagger path.
+    result = model.correct(
+        [prepared], min_error_prob=precision, max_iter=int(passes), rerank=False,
+    )[0]
     elapsed = 1000 * (time.perf_counter() - start)
     return detokenize(result), f"{elapsed:.0f} ms · packed W1.58A8 CPU inference"
 
@@ -37,7 +41,7 @@ with gr.Blocks(title="Minima Spellcheck", theme=gr.themes.Soft(primary_hue="indi
     gr.Markdown(
         "# Minima Spellcheck\n"
         "Grammar, spelling, punctuation, and casing with a packed ternary LFM2.5 encoder. "
-        "The model runs entirely on this Space's CPU."
+        "The model runs entirely on this Space's CPU without the reference model's dense reranker."
     )
     source = gr.Textbox(label="Text", lines=8, value="I has went to the stor yesterday.")
     with gr.Row():
@@ -62,4 +66,3 @@ with gr.Blocks(title="Minima Spellcheck", theme=gr.themes.Soft(primary_hue="indi
     )
 
 demo.queue(default_concurrency_limit=2).launch(server_name="0.0.0.0", server_port=7860)
-
