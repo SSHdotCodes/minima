@@ -41,6 +41,28 @@ inline int32_t hsum256(__m256i value) {
     return _mm_cvtsi128_si32(sum);
 }
 
+inline int32_t hsum128(__m128i value) {
+    value = _mm_hadd_epi32(value, value);
+    value = _mm_hadd_epi32(value, value);
+    return _mm_cvtsi128_si32(value);
+}
+
+inline int32_t dot_avx2_32(const uint8_t* packed, const int8_t* x) {
+    const __m128i bytes = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(packed));
+    const __m128i mask = _mm_set1_epi8(3);
+    const __m128i ones16 = _mm_set1_epi16(1);
+    const __m128i ones8 = _mm_set1_epi8(1);
+    __m128i acc = _mm_setzero_si128();
+    __m128i xsum = _mm_setzero_si128();
+    for (int lane = 0; lane < 4; ++lane) {
+        const __m128i codes = _mm_and_si128(_mm_srli_epi16(bytes, 2 * lane), mask);
+        const __m128i xv = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(x + lane * 8));
+        acc = _mm_add_epi32(acc, _mm_madd_epi16(_mm_maddubs_epi16(codes, xv), ones16));
+        xsum = _mm_add_epi32(xsum, _mm_madd_epi16(_mm_maddubs_epi16(ones8, xv), ones16));
+    }
+    return hsum128(_mm_sub_epi32(acc, xsum));
+}
+
 inline int32_t dot_avx2_128(const uint8_t* packed, const int8_t* x) {
     const __m256i bytes = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(packed));
     const __m256i mask = _mm256_set1_epi8(3);
@@ -61,6 +83,19 @@ inline int32_t dot_avx2_128(const uint8_t* packed, const int8_t* x) {
 #endif
 
 #if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+inline int32_t dot_neon_32(const uint8_t* packed, const int8_t* x) {
+    const uint8x8_t bytes = vld1_u8(packed);
+    const uint8x8_t mask = vdup_n_u8(3);
+    const uint8x8_t one = vdup_n_u8(1);
+    int32x2_t acc = vdup_n_s32(0);
+    for (int lane = 0; lane < 4; ++lane) {
+        const uint8x8_t codes = vand_u8(vshl_u8(bytes, vdup_n_s8(-2 * lane)), mask);
+        const int8x8_t trits = vreinterpret_s8_u8(vsub_u8(codes, one));
+        acc = vdot_s32(acc, trits, vld1_s8(x + lane * 8));
+    }
+    return vaddv_s32(acc);
+}
+
 inline int32_t dot_neon(const uint8_t* packed, const int8_t* x, int group_size) {
     const int quarter = group_size / 4;
     int32x4_t acc = vdupq_n_s32(0);
@@ -86,9 +121,11 @@ inline int32_t dot_neon(const uint8_t* packed, const int8_t* x, int group_size) 
 
 inline int32_t dot_group(const uint8_t* packed, const int8_t* x, int group_size) {
 #if defined(__AVX2__)
+    if (group_size == 32) return dot_avx2_32(packed, x);
     if (group_size == 128) return dot_avx2_128(packed, x);
 #endif
 #if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    if (group_size == 32) return dot_neon_32(packed, x);
     if ((group_size % 64) == 0) return dot_neon(packed, x, group_size);
 #endif
     return dot_scalar(packed, x, group_size);
@@ -167,4 +204,3 @@ torch::Tensor i2s_linear(torch::Tensor input, torch::Tensor packed, torch::Tenso
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, module) {
     module.def("i2s_linear", &i2s_linear, "Fused W1.58A8 I2_S linear (CPU)");
 }
-

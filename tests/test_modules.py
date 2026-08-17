@@ -15,6 +15,15 @@ def test_packed_linear_matches_reference():
     torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
 
 
+def test_group32_packed_linear_matches_reference():
+    torch.manual_seed(30)
+    linear = nn.Linear(128, 23, bias=False)
+    packed = PackedTernaryLinear.from_float(linear, group_size=32).eval()
+    x = torch.randn(7, 128)
+    expected = reference_linear(x, packed.packed_weight, packed.weight_scale, 128, 32)
+    torch.testing.assert_close(packed(x), expected, rtol=2e-3, atol=2e-3)
+
+
 def test_packed_recovery_adapter_has_end_to_end_gradients():
     torch.manual_seed(31)
     packed = PackedTernaryLinear.from_float(nn.Linear(128, 19), group_size=128, recovery_rank=4).train()

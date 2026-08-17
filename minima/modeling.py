@@ -182,7 +182,13 @@ class MinimaModel(nn.Module):
             raise RuntimeError(f"artifact state mismatch: missing={missing}, unexpected={unexpected}")
         if metadata["model_kind"] == "spellchecker":
             patch_tied_vocab_projection(model)
-        model.to(device).eval()
+        model.to(device)
+        if torch.device(device).type == "cpu":
+            # The upstream artifact keeps non-matrix tensors in FP16. Promoting
+            # the small residual set avoids mixed-dtype CPU conv/linear errors;
+            # packed uint8 weights are unchanged.
+            model.float()
+        model.eval()
         return cls(model, metadata)
 
     def save_pretrained(self, output_dir: str | Path, tokenizer=None, *, safe_serialization: bool = True):

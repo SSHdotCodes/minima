@@ -21,7 +21,7 @@ def _cpu_extension():
         flags = ["-O3", "-DNDEBUG"]
         if os.name != "nt":
             flags += ["-ffast-math"]
-        return load(name="minima_ternary_cpu_v1", sources=[str(source)], extra_cflags=flags, verbose=False)
+        return load(name="minima_ternary_cpu_v2", sources=[str(source)], extra_cflags=flags, verbose=False)
     except Exception as exc:  # pragma: no cover - compiler availability is environment-specific
         warnings.warn(f"Minima CPU extension unavailable; using reference path: {exc}", RuntimeWarning)
         return None
@@ -62,4 +62,3 @@ def ternary_linear(x: torch.Tensor, packed: torch.Tensor, scale: torch.Tensor, i
             out = out + bias
         return out.reshape(*original_shape[:-1], packed.shape[0])
     return reference_linear(x, packed, scale, in_features, group_size, bias)
-
