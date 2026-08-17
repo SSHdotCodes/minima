@@ -45,6 +45,15 @@
       "worst_case_usd": 5.0,
       "created_at": "2026-08-17T09:27:58.935791+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a82d41ecd3824960fcba93b"
+    },
+    {
+      "id": "6a82d4bfcd3824960fcba95d",
+      "name": "residual-probe-g32-r128",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T09:30:39.167517+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a82d4bfcd3824960fcba95d"
     }
   ]
 }
