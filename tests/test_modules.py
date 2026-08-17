@@ -8,11 +8,21 @@ from minima.modules import PackedTernaryEmbedding, PackedTernaryLinear, TernaryE
 def test_packed_linear_matches_reference():
     torch.manual_seed(3)
     linear = nn.Linear(128, 19, bias=True)
-    packed = PackedTernaryLinear.from_float(linear, group_size=128)
+    packed = PackedTernaryLinear.from_float(linear, group_size=128).eval()
     x = torch.randn(5, 128)
     expected = reference_linear(x, packed.packed_weight, packed.weight_scale, 128, 128, packed.bias)
     actual = packed(x)
     torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
+
+
+def test_packed_recovery_adapter_has_end_to_end_gradients():
+    torch.manual_seed(31)
+    packed = PackedTernaryLinear.from_float(nn.Linear(128, 19), group_size=128, recovery_rank=4).train()
+    x = torch.randn(2, 128, requires_grad=True)
+    packed(x).square().mean().backward()
+    assert x.grad is not None
+    assert packed.recovery_a.grad is not None
+    assert packed.recovery_b.grad is not None
 
 
 def test_packed_embedding_matches_dequantized_rows():

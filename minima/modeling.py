@@ -12,6 +12,7 @@ from transformers import AutoConfig, AutoModel, AutoModelForMaskedLM, AutoTokeni
 
 from .loading import build_lfm_encoder
 from .modules import PackedTernaryEmbedding, PackedTernaryLinear, TernaryEmbedding, TernaryLinear
+from .spellcheck import patch_tied_vocab_projection
 
 FORMAT_VERSION = 1
 
@@ -72,7 +73,7 @@ def pack_model(model: nn.Module, group_size: int = 128, recovery_rank: int = 0,
                 "recovery_rank": replacement.recovery_rank,
             }
         elif include_embeddings and isinstance(module, (nn.Embedding, TernaryEmbedding)):
-            replacement = PackedTernaryEmbedding.from_float(module, group_size)
+            replacement = PackedTernaryEmbedding.from_float(module, group_size, recovery_rank)
             kind = "embedding"
             descriptor = {
                 "kind": kind,
@@ -137,6 +138,8 @@ class MinimaModel(nn.Module):
                    group_size: int = 128, recovery_rank: int = 0,
                    include_embeddings: bool = True) -> "MinimaModel":
         model, descriptors = pack_model(model, group_size, recovery_rank, include_embeddings)
+        if model_kind == "spellchecker":
+            patch_tied_vocab_projection(model)
         metadata = {
             "format_version": FORMAT_VERSION,
             "format": "i2_s",
@@ -176,6 +179,8 @@ class MinimaModel(nn.Module):
         missing, unexpected = model.load_state_dict(state, strict=False, assign=True)
         if missing or unexpected:
             raise RuntimeError(f"artifact state mismatch: missing={missing}, unexpected={unexpected}")
+        if metadata["model_kind"] == "spellchecker":
+            patch_tied_vocab_projection(model)
         model.to(device).eval()
         return cls(model, metadata)
 
@@ -197,3 +202,8 @@ class MinimaModel(nn.Module):
 
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
+
+    def correct(self, *args, **kwargs):
+        if not hasattr(self.model, "correct"):
+            raise AttributeError("the wrapped model does not implement correct()")
+        return self.model.correct(*args, **kwargs)

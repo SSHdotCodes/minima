@@ -39,6 +39,7 @@ def main():
     parser.add_argument("--repo", default="ProCreations/minima-ptq-probe")
     parser.add_argument("--output", default="/tmp/minima-ptq")
     parser.add_argument("--group-size", type=int, default=128)
+    parser.add_argument("--recovery-rank", type=int, default=0)
     parser.add_argument("--batches", type=int, default=32)
     args = parser.parse_args()
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -46,9 +47,9 @@ def main():
     teacher = load_lfm_encoder(args.base, torch_dtype=torch.bfloat16,
                                attn_implementation="sdpa").cuda().eval()
     source = load_lfm_encoder(args.base, torch_dtype=torch.float16,
-                              attn_implementation="sdpa").eval()
+                              attn_implementation="sdpa").cuda().eval()
     student = MinimaModel.from_model(source, base_model=args.base, model_kind="encoder",
-                                     group_size=args.group_size, recovery_rank=0)
+                                     group_size=args.group_size, recovery_rank=args.recovery_rank)
     student.model.cuda().eval()
     embedding = student.get_input_embeddings()
     assert isinstance(embedding, PackedTernaryEmbedding)
@@ -94,8 +95,9 @@ def main():
     student.save_pretrained(args.output, tokenizer)
     artifact_bytes = sum(path.stat().st_size for path in Path(args.output).rglob("*") if path.is_file())
     report = {
-        "candidate": "direct_ptq",
+        "candidate": "residual_ptq" if args.recovery_rank else "direct_ptq",
         "group_size": args.group_size,
+        "recovery_rank": args.recovery_rank,
         "hidden_cosine": cosine_sum / count,
         "hidden_relative_l2": relative_sum / count,
         "mlm_top1_agreement": agreement_sum / max(1, agreement_count),

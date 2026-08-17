@@ -16,6 +16,19 @@ from .quantization import (
 )
 
 
+def _factor_residual(weight: torch.Tensor, qweight: QuantizedWeight,
+                     rank: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Randomized low-rank factors for W - dequant(W), computed where W lives."""
+    residual = weight.detach().float() - dequantize(qweight, device=weight.device)
+    rank = min(rank, min(residual.shape))
+    q = min(min(residual.shape), rank + 8)
+    u, s, v = torch.svd_lowrank(residual, q=q, niter=2)
+    root = s[:rank].sqrt()
+    a = (u[:, :rank] * root).to(torch.float16).cpu()
+    b = (root[:, None] * v[:, :rank].t()).to(torch.float16).cpu()
+    return a, b
+
+
 class TernaryLinear(nn.Module):
     """Trainable W1.58A8 layer with FP master weights and an STE forward."""
 
@@ -95,6 +108,13 @@ class TernaryEmbedding(nn.Embedding):
             output = output + F.embedding(input_ids, self.recovery_a) @ self.recovery_b
         return output
 
+    def project(self, hidden: torch.Tensor) -> torch.Tensor:
+        weight = fake_quantize_weight(self.weight, self.group_size)
+        output = F.linear(fake_quantize_activation(hidden, self.group_size), weight)
+        if self.recovery_rank:
+            output = output + F.linear(F.linear(hidden, self.recovery_b), self.recovery_a)
+        return output
+
 
 class PackedTernaryLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, group_size: int, packed_weight: torch.Tensor,
@@ -109,6 +129,7 @@ class PackedTernaryLinear(nn.Module):
         self.register_buffer("bias", bias.contiguous() if bias is not None else None)
         self.register_parameter("recovery_a", nn.Parameter(recovery_a.contiguous()) if recovery_a is not None else None)
         self.register_parameter("recovery_b", nn.Parameter(recovery_b.contiguous()) if recovery_b is not None else None)
+        self.register_buffer("_training_weight", None, persistent=False)
 
     @property
     def recovery_rank(self) -> int:
@@ -124,19 +145,23 @@ class PackedTernaryLinear(nn.Module):
             recovery_a = module.recovery_a.detach().to(torch.float16).cpu()
             recovery_b = module.recovery_b.detach().to(torch.float16).cpu()
         elif recovery_rank:
-            residual = module.weight.detach().float().cpu() - dequantize(qweight)
-            u, s, vh = torch.linalg.svd(residual, full_matrices=False)
-            rank = min(recovery_rank, s.numel())
-            root = s[:rank].sqrt()
-            recovery_a = (u[:, :rank] * root).to(torch.float16)
-            recovery_b = (root[:, None] * vh[:rank]).to(torch.float16)
+            recovery_a, recovery_b = _factor_residual(module.weight, qweight, recovery_rank)
         bias = None if module.bias is None else module.bias.detach().to(torch.float16).cpu()
         return cls(module.in_features, module.out_features, group_size, qweight.packed, qweight.scale, bias,
                    recovery_a, recovery_b)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        output = ternary_linear(x, self.packed_weight, self.weight_scale, self.in_features,
-                                self.group_size, self.bias)
+        if self.training and torch.is_grad_enabled():
+            if (self._training_weight is None or self._training_weight.device != x.device or
+                    self._training_weight.dtype != x.dtype):
+                qweight = QuantizedWeight(self.packed_weight, self.weight_scale,
+                                          (self.out_features, self.in_features), self.group_size)
+                self._training_weight = dequantize(qweight, device=x.device, dtype=x.dtype)
+            qx = fake_quantize_activation(x, self.group_size)
+            output = F.linear(qx, self._training_weight, None if self.bias is None else self.bias.to(x.dtype))
+        else:
+            output = ternary_linear(x, self.packed_weight, self.weight_scale, self.in_features,
+                                    self.group_size, self.bias)
         if self.recovery_a is not None:
             output = output + F.linear(F.linear(x, self.recovery_b.to(x.dtype)), self.recovery_a.to(x.dtype))
         return output
@@ -155,6 +180,7 @@ class PackedTernaryEmbedding(nn.Module):
         self.register_buffer("weight_scale", weight_scale.contiguous())
         self.register_parameter("recovery_a", nn.Parameter(recovery_a.contiguous()) if recovery_a is not None else None)
         self.register_parameter("recovery_b", nn.Parameter(recovery_b.contiguous()) if recovery_b is not None else None)
+        self.register_buffer("_training_weight", None, persistent=False)
 
     @property
     def recovery_rank(self) -> int:
@@ -162,13 +188,15 @@ class PackedTernaryEmbedding(nn.Module):
 
     @classmethod
     def from_float(cls, module: nn.Embedding | TernaryEmbedding,
-                   group_size: int | None = None) -> "PackedTernaryEmbedding":
+                   group_size: int | None = None, recovery_rank: int = 0) -> "PackedTernaryEmbedding":
         group_size = group_size or getattr(module, "group_size", 128)
         qweight = quantize_ternary(module.weight, group_size)
         recovery_a = recovery_b = None
         if isinstance(module, TernaryEmbedding) and module.recovery_rank:
             recovery_a = module.recovery_a.detach().to(torch.float16).cpu()
             recovery_b = module.recovery_b.detach().to(torch.float16).cpu()
+        elif recovery_rank:
+            recovery_a, recovery_b = _factor_residual(module.weight, qweight, recovery_rank)
         return cls(module.num_embeddings, module.embedding_dim, group_size, qweight.packed, qweight.scale,
                    module.padding_idx, recovery_a, recovery_b)
 
@@ -188,8 +216,16 @@ class PackedTernaryEmbedding(nn.Module):
         return output
 
     def project(self, hidden: torch.Tensor) -> torch.Tensor:
-        output = ternary_linear(hidden, self.packed_weight, self.weight_scale, self.embedding_dim,
-                                self.group_size)
+        if self.training and torch.is_grad_enabled():
+            if (self._training_weight is None or self._training_weight.device != hidden.device or
+                    self._training_weight.dtype != hidden.dtype):
+                qweight = QuantizedWeight(self.packed_weight, self.weight_scale,
+                                          (self.num_embeddings, self.embedding_dim), self.group_size)
+                self._training_weight = dequantize(qweight, device=hidden.device, dtype=hidden.dtype)
+            output = F.linear(fake_quantize_activation(hidden, self.group_size), self._training_weight)
+        else:
+            output = ternary_linear(hidden, self.packed_weight, self.weight_scale, self.embedding_dim,
+                                    self.group_size)
         if self.recovery_a is not None:
             output = output + F.linear(F.linear(hidden, self.recovery_b.to(hidden.dtype)),
                                        self.recovery_a.to(hidden.dtype))
