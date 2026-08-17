@@ -2,7 +2,13 @@ import torch
 import torch.nn as nn
 
 from minima.kernels.reference import reference_linear
-from minima.modules import PackedTernaryEmbedding, PackedTernaryLinear, TernaryEmbedding, TernaryLinear
+from minima.modules import (
+    PackedTernaryEmbedding,
+    PackedTernaryLinear,
+    TernaryEmbedding,
+    TernaryLinear,
+    optimize_cpu_model,
+)
 
 
 def test_packed_linear_matches_reference():
@@ -48,6 +54,32 @@ def test_dynamic_int8_cpu_fuses_ternary_and_recovery():
     relative_mae = (actual - expected).abs().mean() / expected.abs().mean().clamp_min(1.0e-6)
     assert relative_mae < 0.03
     assert packed.packed_weight.numel() == 0
+
+
+def test_dynamic_int8_cpu_fuses_gated_mlp_pair():
+    if not [engine for engine in torch.backends.quantized.supported_engines if engine != "none"]:
+        return
+
+    class GatedMLP(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w1 = PackedTernaryLinear.from_float(nn.Linear(32, 64, bias=False), 32, 4)
+            self.w3 = PackedTernaryLinear.from_float(nn.Linear(32, 64, bias=False), 32, 4)
+            self.w2 = PackedTernaryLinear.from_float(nn.Linear(64, 32, bias=False), 32, 4)
+
+        def forward(self, x):
+            return self.w2(torch.nn.functional.silu(self.w1(x)) * self.w3(x))
+
+    torch.manual_seed(33)
+    model = GatedMLP().eval()
+    x = torch.randn(5, 32)
+    expected = model(x)
+    optimize_cpu_model(model)
+    actual = model(x)
+    relative_mae = (actual - expected).abs().mean() / expected.abs().mean().clamp_min(1.0e-6)
+    assert relative_mae < 0.06
+    assert model.w1.packed_weight.numel() == 0
+    assert model.w3.packed_weight.numel() == 0
 
 
 def test_packed_embedding_matches_dequantized_rows():

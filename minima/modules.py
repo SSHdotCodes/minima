@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import types
 
 import torch
 import torch.nn as nn
@@ -194,21 +195,28 @@ class PackedTernaryLinear(nn.Module):
     def optimize_cpu(self, *, release_source: bool = True):
         """Fuse ternary + recovery weights into a fast per-channel INT8 CPU GEMM."""
         if self._cpu_int8 is None:
-            if not self.packed_weight.numel():
-                raise RuntimeError("packed source was released before CPU optimization")
-            qweight = QuantizedWeight(self.packed_weight, self.weight_scale,
-                                      (self.out_features, self.in_features), self.group_size)
-            effective = dequantize(qweight, device="cpu", dtype=torch.float32)
-            if self.recovery_a is not None:
-                effective.addmm_(self.recovery_a.float(), self.recovery_b.float())
+            effective = self.effective_cpu_weight()
             object.__setattr__(self, "_cpu_int8", _dynamic_int8_linear(effective, self.bias))
         if release_source:
-            self.packed_weight = torch.empty(0, dtype=torch.uint8)
-            self.weight_scale = torch.empty(0, dtype=torch.float32)
-            self.bias = None
-            self.recovery_a = None
-            self.recovery_b = None
+            self.release_cpu_source()
         return self
+
+    def effective_cpu_weight(self) -> torch.Tensor:
+        if not self.packed_weight.numel():
+            raise RuntimeError("packed source was released before CPU optimization")
+        qweight = QuantizedWeight(self.packed_weight, self.weight_scale,
+                                  (self.out_features, self.in_features), self.group_size)
+        effective = dequantize(qweight, device="cpu", dtype=torch.float32)
+        if self.recovery_a is not None:
+            effective.addmm_(self.recovery_a.float(), self.recovery_b.float())
+        return effective
+
+    def release_cpu_source(self):
+        self.packed_weight = torch.empty(0, dtype=torch.uint8)
+        self.weight_scale = torch.empty(0, dtype=torch.float32)
+        self.bias = None
+        self.recovery_a = None
+        self.recovery_b = None
 
 
 class PackedTernaryEmbedding(nn.Module):
@@ -260,6 +268,7 @@ class PackedTernaryEmbedding(nn.Module):
             output = output + F.embedding(rows, self.recovery_a.to(dtype)) @ self.recovery_b.to(dtype)
         return output
 
+
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         dtype = torch.get_default_dtype() if self.weight_scale.device.type == "cpu" else torch.float16
         return self.selected_rows(input_ids, dtype)
@@ -290,3 +299,34 @@ class PackedTernaryEmbedding(nn.Module):
             output = output + F.linear(F.linear(hidden, self.recovery_b.to(hidden.dtype)),
                                        self.recovery_a.to(hidden.dtype))
         return output
+
+
+def optimize_cpu_model(model: nn.Module) -> nn.Module:
+    """Fuse LFM gated MLP pairs, then optimize every remaining projection."""
+    consumed: set[int] = set()
+    for module in list(model.modules()):
+        w1, w3 = getattr(module, "w1", None), getattr(module, "w3", None)
+        if not isinstance(w1, PackedTernaryLinear) or not isinstance(w3, PackedTernaryLinear):
+            continue
+        if w1.bias is not None or w3.bias is not None:
+            continue
+        gate_up = _dynamic_int8_linear(
+            torch.cat((w1.effective_cpu_weight(), w3.effective_cpu_weight()), dim=0), None,
+        )
+        split = w1.out_features
+        object.__setattr__(module, "_minima_cpu_gate_up", gate_up)
+
+        def _cpu_mlp_forward(this, x, *, _split=split):
+            gate, up = this._minima_cpu_gate_up(x).split(_split, dim=-1)
+            return this.w2(F.silu(gate) * up)
+
+        module.forward = types.MethodType(_cpu_mlp_forward, module)
+        w1.release_cpu_source()
+        w3.release_cpu_source()
+        consumed.update((id(w1), id(w3)))
+    for module in list(model.modules()):
+        if isinstance(module, PackedTernaryLinear) and id(module) not in consumed:
+            module.optimize_cpu(release_source=True)
+        elif isinstance(module, PackedTernaryEmbedding):
+            module._cpu_fast_project = True
+    return model

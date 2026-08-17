@@ -13,7 +13,13 @@ from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoModel, AutoModelForMaskedLM, AutoTokenizer
 
 from .loading import build_lfm_encoder
-from .modules import PackedTernaryEmbedding, PackedTernaryLinear, TernaryEmbedding, TernaryLinear
+from .modules import (
+    PackedTernaryEmbedding,
+    PackedTernaryLinear,
+    TernaryEmbedding,
+    TernaryLinear,
+    optimize_cpu_model,
+)
 from .spellcheck import patch_tied_vocab_projection
 
 FORMAT_VERSION = 1
@@ -215,11 +221,7 @@ class MinimaModel(nn.Module):
             # packed uint8 weights are unchanged.
             model.float()
             if os.environ.get("MINIMA_CPU_BACKEND", "dynamic_int8").lower() != "i2s":
-                for module in model.modules():
-                    if isinstance(module, PackedTernaryLinear):
-                        module.optimize_cpu(release_source=True)
-                    elif isinstance(module, PackedTernaryEmbedding):
-                        module._cpu_fast_project = True
+                optimize_cpu_model(model)
         model.eval()
         return cls(model, metadata)
 
