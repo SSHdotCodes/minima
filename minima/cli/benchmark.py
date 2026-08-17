@@ -8,9 +8,10 @@ import statistics
 import time
 
 import torch
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoTokenizer
 
 from minima.kernels import kernel_status
+from minima.loading import load_lfm_encoder
 from minima.modeling import MinimaModel
 
 
@@ -34,7 +35,7 @@ def main(argv: list[str] | None = None):
     tokenizer = AutoTokenizer.from_pretrained(args.base, trust_remote_code=True)
     results = {"kernel": kernel_status(), "threads": torch.get_num_threads(), "measurements": []}
     for name, loader in (
-        ("base_fp32", lambda: AutoModel.from_pretrained(args.base, trust_remote_code=True).eval()),
+        ("base_fp32", lambda: load_lfm_encoder(args.base).eval()),
         ("minima", lambda: MinimaModel.from_pretrained(args.model).eval()),
     ):
         before = _rss_mb()
@@ -69,4 +70,3 @@ def main(argv: list[str] | None = None):
 
 if __name__ == "__main__":
     main()
-

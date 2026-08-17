@@ -10,8 +10,9 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoTokenizer
 
+from .loading import load_lfm_encoder
 from .modeling import MinimaModel, prepare_qat
 from .modules import TernaryEmbedding
 from .quantization import fake_quantize_weight
@@ -127,10 +128,10 @@ def distill(config: DistillationConfig) -> dict:
     device = torch.device("cuda")
     torch.backends.cuda.matmul.allow_tf32 = True
     tokenizer = AutoTokenizer.from_pretrained(config.model, trust_remote_code=True)
-    teacher = AutoModel.from_pretrained(config.model, trust_remote_code=True, torch_dtype=torch.bfloat16,
-                                        attn_implementation="sdpa").to(device).eval()
-    student = AutoModel.from_pretrained(config.model, trust_remote_code=True, torch_dtype=torch.float32,
-                                        attn_implementation="sdpa").to(device)
+    teacher = load_lfm_encoder(config.model, torch_dtype=torch.bfloat16,
+                               attn_implementation="sdpa").to(device).eval()
+    student = load_lfm_encoder(config.model, torch_dtype=torch.float32,
+                               attn_implementation="sdpa").to(device)
     prepare_qat(student, config.group_size, config.recovery_rank, include_embeddings=True)
     for name, parameter in student.named_parameters():
         parameter.requires_grad_(config.train_ternary_weights or "recovery_" in name)

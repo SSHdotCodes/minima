@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 
 import torch
-from transformers import AutoModel, AutoModelForMaskedLM, AutoTokenizer
+from transformers import AutoModelForMaskedLM, AutoTokenizer
 
+from minima.loading import load_lfm_encoder
 from minima.modeling import MinimaModel
 
 
@@ -22,8 +23,12 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None):
     args = parser().parse_args(argv)
-    factory = AutoModelForMaskedLM if args.kind == "masked_lm" else AutoModel
-    model = factory.from_pretrained(args.model, trust_remote_code=True, torch_dtype=torch.float32).to(args.device)
+    if args.kind == "masked_lm":
+        model = AutoModelForMaskedLM.from_pretrained(
+            args.model, trust_remote_code=True, torch_dtype=torch.float32,
+        ).to(args.device)
+    else:
+        model = load_lfm_encoder(args.model, torch_dtype=torch.float32).to(args.device)
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     minima = MinimaModel.from_model(model, base_model=args.model, model_kind=args.kind,
                                     group_size=args.group_size, recovery_rank=args.recovery_rank,
@@ -34,4 +39,3 @@ def main(argv: list[str] | None = None):
 
 if __name__ == "__main__":
     main()
-

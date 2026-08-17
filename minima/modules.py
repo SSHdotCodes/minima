@@ -107,8 +107,8 @@ class PackedTernaryLinear(nn.Module):
         self.register_buffer("packed_weight", packed_weight.to(torch.uint8).contiguous())
         self.register_buffer("weight_scale", weight_scale.contiguous())
         self.register_buffer("bias", bias.contiguous() if bias is not None else None)
-        self.register_buffer("recovery_a", recovery_a.contiguous() if recovery_a is not None else None)
-        self.register_buffer("recovery_b", recovery_b.contiguous() if recovery_b is not None else None)
+        self.register_parameter("recovery_a", nn.Parameter(recovery_a.contiguous()) if recovery_a is not None else None)
+        self.register_parameter("recovery_b", nn.Parameter(recovery_b.contiguous()) if recovery_b is not None else None)
 
     @property
     def recovery_rank(self) -> int:
@@ -153,8 +153,8 @@ class PackedTernaryEmbedding(nn.Module):
         self.padding_idx = padding_idx
         self.register_buffer("packed_weight", packed_weight.to(torch.uint8).contiguous())
         self.register_buffer("weight_scale", weight_scale.contiguous())
-        self.register_buffer("recovery_a", recovery_a.contiguous() if recovery_a is not None else None)
-        self.register_buffer("recovery_b", recovery_b.contiguous() if recovery_b is not None else None)
+        self.register_parameter("recovery_a", nn.Parameter(recovery_a.contiguous()) if recovery_a is not None else None)
+        self.register_parameter("recovery_b", nn.Parameter(recovery_b.contiguous()) if recovery_b is not None else None)
 
     @property
     def recovery_rank(self) -> int:

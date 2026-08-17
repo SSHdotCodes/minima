@@ -10,6 +10,7 @@ from huggingface_hub import snapshot_download
 from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoModel, AutoModelForMaskedLM, AutoTokenizer
 
+from .loading import build_lfm_encoder
 from .modules import PackedTernaryEmbedding, PackedTernaryLinear, TernaryEmbedding, TernaryLinear
 
 FORMAT_VERSION = 1
@@ -161,9 +162,13 @@ class MinimaModel(nn.Module):
 
         base_model = metadata["base_model"]
         config = AutoConfig.from_pretrained(base_model, trust_remote_code=True, token=token)
-        factory = AutoModelForMaskedLM if metadata["model_kind"] == "masked_lm" else AutoModel
         with torch.device("meta"):
-            model = factory.from_config(config, trust_remote_code=True)
+            if metadata["model_kind"] == "masked_lm":
+                model = AutoModelForMaskedLM.from_config(config, trust_remote_code=True)
+            elif metadata["model_kind"] == "encoder":
+                model = build_lfm_encoder(config)
+            else:
+                model = AutoModel.from_config(config, trust_remote_code=True)
         for path, descriptor in metadata["modules"].items():
             parent, name = _parent_and_name(model, path)
             setattr(parent, name, _empty_packed(descriptor))

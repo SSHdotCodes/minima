@@ -12,8 +12,9 @@ import torch
 import torch.nn.functional as F
 from datasets import load_dataset
 from huggingface_hub import HfApi
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoTokenizer
 
+from minima.loading import load_lfm_encoder
 from minima.modeling import MinimaModel
 from minima.modules import PackedTernaryEmbedding
 
@@ -42,10 +43,10 @@ def main():
     args = parser.parse_args()
     torch.backends.cuda.matmul.allow_tf32 = True
     tokenizer = AutoTokenizer.from_pretrained(args.base, trust_remote_code=True)
-    teacher = AutoModel.from_pretrained(args.base, trust_remote_code=True, torch_dtype=torch.bfloat16,
-                                        attn_implementation="sdpa").cuda().eval()
-    source = AutoModel.from_pretrained(args.base, trust_remote_code=True, torch_dtype=torch.float16,
-                                       attn_implementation="sdpa").eval()
+    teacher = load_lfm_encoder(args.base, torch_dtype=torch.bfloat16,
+                               attn_implementation="sdpa").cuda().eval()
+    source = load_lfm_encoder(args.base, torch_dtype=torch.float16,
+                              attn_implementation="sdpa").eval()
     student = MinimaModel.from_model(source, base_model=args.base, model_kind="encoder",
                                      group_size=args.group_size, recovery_rank=0)
     student.model.cuda().eval()

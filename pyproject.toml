@@ -25,6 +25,7 @@ test = ["pytest>=8.3", "ruff>=0.12"]
 minima-convert = "minima.cli.convert:main"
 minima-benchmark = "minima.cli.benchmark:main"
 minima-train = "minima.cli.train:main"
+minima-tune = "minima.cli.tune:main"
 
 [tool.setuptools.packages.find]
 include = ["minima*"]
@@ -38,4 +39,3 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 110
 target-version = "py310"
-
