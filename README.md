@@ -1,14 +1,16 @@
 # Minima
 
-Minima is an in-progress W1.58A8 conversion of
+Minima is a W1.58A8 release candidate converted from
 [LiquidAI/LFM2.5-Encoder-350M](https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M)
-for fast, low-memory CPU and CUDA inference without losing its 8,192-token context.
-It includes packed kernels, quantization-aware distillation, recovery adapters,
-task-tuning tools, and a spellchecker reference fine-tune.
+for fast, low-memory CPU inference and fused CUDA kernel research without losing
+its 8,192-token context. It includes packed kernels, quantization-aware
+distillation, recovery adapters, task-tuning tools, and a spellchecker reference
+fine-tune. The current CUDA path is memory-oriented and does not beat BF16 H200
+latency; exact timings are published rather than presented as a speedup.
 
-> Release status: engineering validation. The public benchmark gate is 97% of a
-> matched FP32 baseline. Results will be added from immutable HF Job outputs; no
-> unmeasured speed or quality claims are made here.
+> Release status: **candidate**. It retained 96.66% on the declared six-task
+> downstream gate, missing the 97% target by 0.34 percentage points. CPU speed,
+> memory, spellchecker, and all quality results are measured and public.
 
 ## Why this is more than post-training rounding
 
@@ -26,7 +28,8 @@ backbone. The strict no-adapter profile remains available as an ablation.
 - Context: unchanged 8,192 tokens
 - Tuning: STE QAT or lightweight recovery-adapter tuning
 
-See [architecture](docs/architecture.md) and the exact [quality gates](docs/quality-gate.md).
+See [architecture](docs/architecture.md), the exact [quality gates](docs/quality-gate.md),
+and the [measured release results](docs/results.md).
 
 ## Install and use
 
@@ -34,7 +37,7 @@ See [architecture](docs/architecture.md) and the exact [quality gates](docs/qual
 pip install "minima-lfm @ git+https://github.com/SSHDotCodes/minima.git"
 ```
 
-Once the gated checkpoint is published:
+The public candidate checkpoint is available now:
 
 ```python
 from minima import MinimaModel
@@ -75,6 +78,13 @@ python scripts/hf_job.py --name qat --flavor h200 --timeout 6h -- \
 
 The reservation ledger is [hf_jobs_ledger.json](hf_jobs_ledger.json). Unrelated
 Jobs in the same account are not modified or charged to this project ledger.
+
+## Published artifacts
+
+- [Base candidate](https://huggingface.co/ProCreations/minima)
+- [Spellchecker](https://huggingface.co/ProCreations/minima-spellcheck)
+- [Live spellchecker Space](https://huggingface.co/spaces/ProCreations/minima-spellcheck)
+- [Immutable benchmark reports](https://huggingface.co/datasets/ProCreations/minima-results)
 
 ## License
 

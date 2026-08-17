@@ -31,6 +31,8 @@ so a full dequantized weight tensor is never materialized.
 | strict | ternary I2_S | int8 | none | smallest artifact and ablation |
 | quality | ternary I2_S | int8 | rank-128 FP16 | release candidate and tuning |
 
-Measured sizes and resident-set memory are published only after the release jobs
-complete. The original checkpoint is FP32, so its raw 354.5M parameters occupy
-about 1.42 GB before framework overhead.
+The released quality checkpoint is 223,916,888 bytes, compared with
+1,417,952,208 bytes for the source weight file. End-to-end resident memory also
+includes framework and activation storage, so its measured reduction is smaller;
+see the [release results](results.md). The original checkpoint is FP32, so its raw
+354.5M parameters occupy about 1.42 GB before framework overhead.
