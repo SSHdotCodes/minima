@@ -254,6 +254,15 @@
       "worst_case_usd": 5.0,
       "created_at": "2026-08-17T18:05:03.660443+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a834d4fcd3824960fcbbc13"
+    },
+    {
+      "id": "6a834e74e55292eada79b848",
+      "name": "strict-rate-calibration",
+      "flavor": "h200",
+      "timeout": "20m",
+      "worst_case_usd": 1.6667,
+      "created_at": "2026-08-17T18:09:56.850381+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a834e74e55292eada79b848"
     }
   ]
 }
