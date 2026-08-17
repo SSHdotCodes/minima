@@ -28,6 +28,8 @@ def run_one(kind: str, args, output: Path) -> dict:
         str(args.runs),
         "--threads",
         str(args.threads),
+        "--cpu-backend",
+        args.backend,
         "--only",
         kind,
         "--output",
@@ -45,6 +47,12 @@ def main():
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--threads", type=int, default=32)
+    parser.add_argument(
+        "--backend",
+        choices=("i2s", "dynamic_int8"),
+        default="i2s",
+        help="Minima CPU backend. The release gate defaults to direct packed I2S.",
+    )
     parser.add_argument("--output", default="/tmp/minima-cpu")
     parser.add_argument("--results-repo", default="ProCreations/minima-results")
     args = parser.parse_args()
@@ -69,6 +77,7 @@ def main():
         "model": args.model,
         "base": args.base,
         "threads": args.threads,
+        "backend": args.backend,
         "platform": minima["platform"],
         "processor": minima["processor"],
         "kernel": minima["kernel"],
