@@ -15,7 +15,13 @@ from datasets import load_dataset
 from huggingface_hub import HfApi
 from sklearn.metrics import f1_score, matthews_corrcoef
 from scipy.stats import spearmanr
-from transformers import AutoTokenizer, DataCollatorWithPadding, Trainer, TrainingArguments
+from transformers import (
+    AutoTokenizer,
+    DataCollatorWithPadding,
+    Trainer,
+    TrainingArguments,
+    get_linear_schedule_with_warmup,
+)
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 from minima.loading import load_lfm_encoder
@@ -65,7 +71,7 @@ def score(metric, logits, labels):
 
 
 def train_one(kind, model_id, base_id, task, tokenizer, max_steps, seed, output_root,
-              learning_rate_override=None):
+              learning_rate_override=None, head_learning_rate_override=None):
     text_a, text_b, validation_split, num_labels, metric = TASKS[task]
     raw = load_dataset("nyu-mll/glue", task)
 
@@ -84,7 +90,16 @@ def train_one(kind, model_id, base_id, task, tokenizer, max_steps, seed, output_
         learning_rate = learning_rate_override or 3e-5
     else:
         minima = MinimaModel.from_pretrained(model_id, device="cuda")
-        enable_recovery_training(minima)
+        has_recovery = any(
+            descriptor.get("recovery_rank", 0)
+            for descriptor in minima.minima_metadata["modules"].values()
+        )
+        if has_recovery:
+            enable_recovery_training(minima)
+        else:
+            minima.prepare_qat().float()
+            for parameter in minima.parameters():
+                parameter.requires_grad_(True)
         encoder = minima
         config = minima.config
         learning_rate = learning_rate_override or 1e-4
@@ -106,8 +121,29 @@ def train_one(kind, model_id, base_id, task, tokenizer, max_steps, seed, output_
         seed=seed,
         remove_unused_columns=False,
     )
-    trainer = Trainer(model=model, args=args, train_dataset=prepared["train"],
-                      data_collator=DataCollatorWithPadding(tokenizer), processing_class=tokenizer)
+    trainer_options = {}
+    if kind != "base" and head_learning_rate_override is not None:
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": model.encoder.parameters(), "lr": learning_rate},
+                {"params": model.classifier.parameters(), "lr": head_learning_rate_override},
+            ],
+            weight_decay=args.weight_decay,
+        )
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=max_steps,
+        )
+        trainer_options["optimizers"] = (optimizer, scheduler)
+    trainer = Trainer(
+        model=model,
+        args=args,
+        train_dataset=prepared["train"],
+        data_collator=DataCollatorWithPadding(tokenizer),
+        processing_class=tokenizer,
+        **trainer_options,
+    )
     trainer.train()
     prediction = trainer.predict(prepared[validation_split])
     result = score(metric, prediction.predictions, prediction.label_ids)
@@ -130,6 +166,8 @@ def main():
     parser.add_argument("--seed", type=int, default=45)
     parser.add_argument("--output", default="/tmp/minima-quality")
     parser.add_argument("--results-repo", default="ProCreations/minima-results")
+    parser.add_argument("--results-path", default="quality_gate.json")
+    parser.add_argument("--threshold", type=float, default=0.97)
     args = parser.parse_args()
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
@@ -162,7 +200,7 @@ def main():
         results["tasks"][task] = {"base": base_score, "minima": minima_score, "capped_ratio": ratio}
         print(json.dumps({"task": task, **results["tasks"][task]}), flush=True)
     results["relative_mean"] = float(np.mean([item["capped_ratio"] for item in results["tasks"].values()]))
-    results["threshold"] = 0.97
+    results["threshold"] = args.threshold
     results["passed"] = results["relative_mean"] >= results["threshold"]
     result_path = output / "quality_gate.json"
     result_path.write_text(json.dumps(results, indent=2) + "\n")
@@ -170,7 +208,7 @@ def main():
     api = HfApi()
     api.create_repo(args.results_repo, repo_type="dataset", exist_ok=True)
     api.upload_file(repo_id=args.results_repo, repo_type="dataset", path_or_fileobj=result_path,
-                    path_in_repo="quality_gate.json", commit_message="Upload Minima downstream quality gate")
+                    path_in_repo=args.results_path, commit_message="Upload Minima downstream quality gate")
     if not results["passed"]:
         raise SystemExit("quality gate failed")
 

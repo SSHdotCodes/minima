@@ -2,7 +2,12 @@ import torch
 import torch.nn as nn
 
 from minima.loading import encoder_from_mlm
-from minima.modeling import _materialize_derived_buffers
+from minima.modeling import (
+    _materialize_derived_buffers,
+    _transcode_packed_state,
+    _transcode_scale_state,
+)
+from minima.quantization import pack_i2s
 
 
 class Wrapper(nn.Module):
@@ -32,3 +37,88 @@ def test_nonpersistent_rope_buffers_are_materialized():
     _materialize_derived_buffers(module)
     assert module.inv_freq.device.type == "cpu"
     torch.testing.assert_close(module.inv_freq, torch.arange(8, dtype=torch.float32))
+
+
+def test_base3_checkpoint_state_expands_to_i2s_runtime():
+    trits = torch.randint(-1, 2, (3, 64), dtype=torch.int8)
+    runtime = pack_i2s(trits, 32)
+    metadata = {
+        "storage_format": "base3",
+        "modules": {"projection": {"group_size": 32}},
+    }
+    stored = _transcode_packed_state(
+        {"projection.packed_weight": runtime.clone()}, metadata, loading=False,
+    )
+    assert stored["projection.packed_weight"].shape == (3, 2, 7)
+    restored = _transcode_packed_state(stored, metadata, loading=True)
+    torch.testing.assert_close(restored["projection.packed_weight"], runtime)
+
+
+def test_rowwise_base3_and_uint8_scales_restore_runtime_state():
+    trits = torch.randint(-1, 2, (3, 48), dtype=torch.int8)
+    runtime = pack_i2s(trits, 16)
+    scales = torch.rand(3, 3, dtype=torch.float16) + 0.01
+    metadata = {
+        "storage_format": "base3_rowwise",
+        "scale_storage": "uint8_rowwise",
+        "modules": {
+            "projection": {
+                "kind": "linear",
+                "in_features": 48,
+                "out_features": 3,
+                "group_size": 16,
+            },
+        },
+    }
+    stored = {
+        "projection.packed_weight": runtime.clone(),
+        "projection.weight_scale": scales.clone(),
+    }
+    _transcode_scale_state(stored, metadata, loading=False)
+    _transcode_packed_state(stored, metadata, loading=False)
+    assert stored["projection.packed_weight"].shape == (3, 10)
+    assert stored["projection.weight_scale_q"].dtype == torch.uint8
+    _transcode_packed_state(stored, metadata, loading=True)
+    _transcode_scale_state(stored, metadata, loading=True)
+    torch.testing.assert_close(stored["projection.packed_weight"], runtime)
+    torch.testing.assert_close(stored["projection.weight_scale"], scales, rtol=3e-3, atol=3e-3)
+
+
+def test_cuda_artifacts_use_one_floating_runtime_dtype(monkeypatch, tmp_path):
+    """FP32 QAT residual tensors must not promote an FP16 packed stream."""
+    from minima import modeling
+
+    class FakeModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm = nn.LayerNorm(4, dtype=torch.float32)
+            self.register_buffer("codes", torch.ones(4, dtype=torch.uint8))
+            self.config = object()
+
+        def get_input_embeddings(self):
+            return None
+
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "minima_config.json").write_text(
+        '{"format_version": 1, "base_model": "fake", "base_revision": null, '
+        '"model_kind": "encoder", "modules": {}}'
+    )
+    state = FakeModel().state_dict()
+
+    monkeypatch.setattr(modeling.AutoConfig, "from_pretrained", lambda *args, **kwargs: object())
+    monkeypatch.setattr(modeling, "build_lfm_encoder", lambda config: FakeModel())
+    monkeypatch.setattr(modeling, "load_file", lambda *args, **kwargs: state)
+    monkeypatch.setattr(modeling, "_materialize_derived_buffers", lambda model: None)
+
+    original_to = FakeModel.to
+
+    def record_cuda_to(self, *args, **kwargs):
+        # Exercise dtype conversion without requiring a CUDA runner in CI.
+        assert kwargs["device"] == torch.device("cuda")
+        return original_to(self, dtype=kwargs["dtype"])
+
+    monkeypatch.setattr(FakeModel, "to", record_cuda_to)
+    loaded = modeling.MinimaModel.from_pretrained(artifact, device="cuda")
+    assert loaded.model.norm.weight.dtype == torch.float16
+    assert loaded.model.codes.dtype == torch.uint8

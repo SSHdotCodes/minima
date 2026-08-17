@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
 
 from .loading import load_lfm_encoder
 from .modeling import MinimaModel, prepare_qat
-from .modules import PackedTernaryEmbedding, TernaryEmbedding
+from .modules import PackedTernaryEmbedding, TernaryEmbedding, TernaryLinear
 from .quantization import fake_quantize_weight
 from .tuning import cast_recovery_parameters
 
@@ -22,6 +22,7 @@ from .tuning import cast_recovery_parameters
 @dataclass
 class DistillationConfig:
     model: str = "LiquidAI/LFM2.5-Encoder-350M"
+    student_model: str | None = None
     dataset: str = "HuggingFaceFW/fineweb-edu"
     dataset_config: str | None = "sample-10BT"
     split: str = "train"
@@ -35,15 +36,24 @@ class DistillationConfig:
     learning_rate: float = 5e-5
     warmup_steps: int = 200
     group_size: int = 128
-    recovery_rank: int = 64
+    storage_format: str = "i2_s"
+    scale_storage: str = "fp16"
+    recovery_rank: int = 0
     teacher_topk: int = 32
     hidden_loss_weight: float = 2.0
+    layerwise_hidden_loss_weight: float = 0.0
+    pooled_loss_weight: float = 0.0
+    hidden_mse_loss_weight: float = 0.0
+    relational_loss_weight: float = 0.0
     distill_loss_weight: float = 1.0
     mlm_loss_weight: float = 1.0
     temperature: float = 2.0
     seed: int = 42
     log_every: int = 10
     train_ternary_weights: bool = False
+    activation_warmup_steps: int = 0
+    weight_warmup_steps: int = 0
+    max_weight_file_mb: float = 0.0
 
 
 def _mask_tokens(input_ids: torch.Tensor, attention_mask: torch.Tensor, tokenizer,
@@ -76,7 +86,10 @@ def _selected_student_rows(embedding: TernaryEmbedding | PackedTernaryEmbedding,
     if isinstance(embedding, PackedTernaryEmbedding):
         return embedding.selected_rows(ids, torch.float32)
     rows = embedding.weight.index_select(0, ids.reshape(-1)).view(*ids.shape, embedding.embedding_dim)
-    rows = fake_quantize_weight(rows.reshape(-1, embedding.embedding_dim), embedding.group_size).view_as(rows)
+    selected_scale = embedding.log_scale.index_select(0, ids.reshape(-1)).exp()
+    rows = fake_quantize_weight(
+        rows.reshape(-1, embedding.embedding_dim), embedding.group_size, selected_scale,
+    ).view_as(rows)
     if embedding.recovery_rank:
         a = embedding.recovery_a.index_select(0, ids.reshape(-1)).view(*ids.shape, embedding.recovery_rank)
         rows = rows + a @ embedding.recovery_b
@@ -121,6 +134,61 @@ def _learning_rate(step: int, config: DistillationConfig) -> float:
     return config.learning_rate * 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
+def _masked_cosine_loss(student: torch.Tensor, teacher: torch.Tensor,
+                        attention_mask: torch.Tensor) -> torch.Tensor:
+    loss = 1.0 - F.cosine_similarity(student.float(), teacher.float(), dim=-1)
+    mask = attention_mask.to(loss.dtype)
+    return (loss * mask).sum() / mask.sum().clamp_min(1)
+
+
+def _pooled_cosine_loss(student: torch.Tensor, teacher: torch.Tensor,
+                        attention_mask: torch.Tensor) -> torch.Tensor:
+    student_pooled, teacher_pooled = _pooled_vectors(student, teacher, attention_mask)
+    return (1.0 - F.cosine_similarity(student_pooled, teacher_pooled, dim=-1)).mean()
+
+
+def _pooled_vectors(student: torch.Tensor, teacher: torch.Tensor,
+                    attention_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    mask = attention_mask.unsqueeze(-1).float()
+    denominator = mask.sum(dim=1).clamp_min(1)
+    student_pooled = (student.float() * mask).sum(dim=1) / denominator
+    teacher_pooled = (teacher.float() * mask).sum(dim=1) / denominator
+    return student_pooled, teacher_pooled
+
+
+def _masked_relative_mse_loss(student: torch.Tensor, teacher: torch.Tensor,
+                              attention_mask: torch.Tensor) -> torch.Tensor:
+    squared_error = (student.float() - teacher.float()).square().mean(dim=-1)
+    teacher_energy = teacher.float().square().mean(dim=-1).clamp_min(1.0e-6)
+    loss = squared_error / teacher_energy
+    mask = attention_mask.to(loss.dtype)
+    return (loss * mask).sum() / mask.sum().clamp_min(1)
+
+
+def _pooled_relational_loss(student: torch.Tensor, teacher: torch.Tensor,
+                            attention_mask: torch.Tensor) -> torch.Tensor:
+    student_pooled, teacher_pooled = _pooled_vectors(student, teacher, attention_mask)
+    student_pooled = F.normalize(student_pooled, dim=-1)
+    teacher_pooled = F.normalize(teacher_pooled, dim=-1)
+    difference = student_pooled @ student_pooled.t() - teacher_pooled @ teacher_pooled.t()
+    if difference.shape[0] <= 1:
+        return difference.new_zeros(())
+    off_diagonal = ~torch.eye(difference.shape[0], dtype=torch.bool, device=difference.device)
+    return difference.square()[off_diagonal].mean()
+
+
+def _set_activation_quant(model: torch.nn.Module, enabled: bool):
+    for module in model.modules():
+        if isinstance(module, TernaryLinear):
+            module.activation_quant = enabled
+
+
+def _set_weight_quant_strength(model: torch.nn.Module, strength: float):
+    for module in model.modules():
+        if isinstance(module, (TernaryLinear, TernaryEmbedding)):
+            module.weight_quant_strength = strength
+
+
 def distill(config: DistillationConfig) -> dict:
     from datasets import load_dataset
 
@@ -134,26 +202,49 @@ def distill(config: DistillationConfig) -> dict:
     tokenizer = AutoTokenizer.from_pretrained(config.model, trust_remote_code=True)
     teacher = load_lfm_encoder(config.model, torch_dtype=torch.bfloat16,
                                attn_implementation="sdpa").to(device).eval()
-    student_source = load_lfm_encoder(
-        config.model,
-        torch_dtype=torch.float32 if config.train_ternary_weights else torch.float16,
-        attn_implementation="sdpa",
-    ).to(device)
     packed_student = None
-    if config.train_ternary_weights:
-        student = prepare_qat(student_source, config.group_size, config.recovery_rank, include_embeddings=True)
+    if config.student_model:
+        if not config.train_ternary_weights or config.recovery_rank:
+            raise ValueError("strict checkpoint continuation requires full-weight QAT and recovery_rank=0")
+        resumed = MinimaModel.from_pretrained(config.student_model, device=device)
+        if any(descriptor.get("recovery_rank", 0)
+               for descriptor in resumed.minima_metadata["modules"].values()):
+            raise ValueError("cannot continue strict QAT from an artifact with recovery adapters")
+        student = resumed.prepare_qat().model.float()
     else:
-        packed_student = MinimaModel.from_model(
-            student_source, base_model=config.model, model_kind="encoder",
-            group_size=config.group_size, recovery_rank=config.recovery_rank,
-        )
-        student = packed_student.model.to(device)
+        student_source = load_lfm_encoder(
+            config.model,
+            torch_dtype=torch.float32 if config.train_ternary_weights else torch.float16,
+            attn_implementation="sdpa",
+        ).to(device)
+        if config.train_ternary_weights:
+            student = prepare_qat(
+                student_source, config.group_size, config.recovery_rank, include_embeddings=True,
+            )
+        else:
+            packed_student = MinimaModel.from_model(
+                student_source, base_model=config.model, model_kind="encoder",
+                group_size=config.group_size, recovery_rank=config.recovery_rank,
+                storage_format=config.storage_format,
+                scale_storage=config.scale_storage,
+            )
+            student = packed_student.model.to(device)
     for name, parameter in student.named_parameters():
         parameter.requires_grad_(config.train_ternary_weights or "recovery_" in name)
         if parameter.requires_grad and not config.train_ternary_weights:
             parameter.data = parameter.data.float()
-    trainable = [parameter for parameter in student.parameters() if parameter.requires_grad]
-    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, betas=(0.9, 0.95), weight_decay=0.01)
+    trainable_items = [(name, parameter) for name, parameter in student.named_parameters()
+                       if parameter.requires_grad]
+    trainable = [parameter for _, parameter in trainable_items]
+    decay = [parameter for name, parameter in trainable_items
+             if parameter.ndim >= 2 and not name.endswith("log_scale")]
+    no_decay = [parameter for name, parameter in trainable_items
+                if parameter.ndim < 2 or name.endswith("log_scale")]
+    optimizer = torch.optim.AdamW(
+        [{"params": decay, "weight_decay": 0.01}, {"params": no_decay, "weight_decay": 0.0}],
+        lr=config.learning_rate,
+        betas=(0.9, 0.95),
+    )
 
     dataset = load_dataset(config.dataset, config.dataset_config, split=config.split, streaming=True)
     dataset = dataset.shuffle(seed=config.seed, buffer_size=10_000)
@@ -175,9 +266,26 @@ def distill(config: DistillationConfig) -> dict:
     history: list[dict] = []
     optimizer.zero_grad(set_to_none=True)
     student.train()
+    if config.train_ternary_weights and config.activation_warmup_steps:
+        _set_activation_quant(student, False)
 
     for step in range(config.steps):
-        totals = {"loss": 0.0, "hidden": 0.0, "mlm": 0.0, "distill": 0.0, "teacher_acc": 0.0}
+        if config.train_ternary_weights and config.weight_warmup_steps:
+            strength = min(1.0, (step + 1) / config.weight_warmup_steps)
+            _set_weight_quant_strength(student, strength)
+        if config.train_ternary_weights and step == config.activation_warmup_steps:
+            _set_activation_quant(student, True)
+        totals = {
+            "loss": 0.0,
+            "hidden": 0.0,
+            "layerwise_hidden": 0.0,
+            "pooled": 0.0,
+            "hidden_mse": 0.0,
+            "relational": 0.0,
+            "mlm": 0.0,
+            "distill": 0.0,
+            "teacher_acc": 0.0,
+        }
         for _ in range(config.gradient_accumulation):
             try:
                 input_ids, attention_mask = next(iterator)
@@ -187,23 +295,67 @@ def distill(config: DistillationConfig) -> dict:
             input_ids = input_ids.to(device, non_blocking=True)
             attention_mask = attention_mask.to(device, non_blocking=True)
             corrupted, labels = _mask_tokens(input_ids, attention_mask, tokenizer)
+            return_hidden_states = config.layerwise_hidden_loss_weight > 0
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-                teacher_hidden = teacher(input_ids=corrupted, attention_mask=attention_mask).last_hidden_state
+                teacher_output = teacher(
+                    input_ids=corrupted,
+                    attention_mask=attention_mask,
+                    output_hidden_states=return_hidden_states,
+                )
+                teacher_hidden = teacher_output.last_hidden_state
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                student_hidden = student(input_ids=corrupted, attention_mask=attention_mask).last_hidden_state
-                hidden_loss = 1.0 - F.cosine_similarity(student_hidden.float(), teacher_hidden.float(), dim=-1)
-                hidden_loss = (hidden_loss * attention_mask).sum() / attention_mask.sum()
+                student_output = student(
+                    input_ids=corrupted,
+                    attention_mask=attention_mask,
+                    output_hidden_states=return_hidden_states,
+                )
+                student_hidden = student_output.last_hidden_state
+                hidden_loss = _masked_cosine_loss(student_hidden, teacher_hidden, attention_mask)
+                pooled_loss = _pooled_cosine_loss(student_hidden, teacher_hidden, attention_mask)
+                hidden_mse_loss = _masked_relative_mse_loss(
+                    student_hidden, teacher_hidden, attention_mask,
+                )
+                relational_loss = _pooled_relational_loss(
+                    student_hidden, teacher_hidden, attention_mask,
+                )
+                if return_hidden_states:
+                    teacher_states = teacher_output.hidden_states
+                    student_states = student_output.hidden_states
+                    if len(student_states) != len(teacher_states):
+                        raise RuntimeError(
+                            f"hidden-state count mismatch: student={len(student_states)}, "
+                            f"teacher={len(teacher_states)}",
+                        )
+                    # The final state already has its own stronger objective.
+                    internal_pairs = list(zip(student_states[:-1], teacher_states[:-1]))
+                    layerwise_hidden_loss = torch.stack([
+                        _masked_cosine_loss(student_state, teacher_state, attention_mask)
+                        for student_state, teacher_state in internal_pairs
+                    ]).mean()
+                else:
+                    layerwise_hidden_loss = hidden_loss.new_zeros(())
                 mlm_loss, distill_loss, teacher_acc = _candidate_loss(
                     student_hidden, teacher_hidden, labels, student_embedding, teacher_weight,
                     config.teacher_topk, config.temperature,
                 )
-                loss = (config.hidden_loss_weight * hidden_loss + config.mlm_loss_weight * mlm_loss +
-                        config.distill_loss_weight * distill_loss) / config.gradient_accumulation
+                loss = (
+                    config.hidden_loss_weight * hidden_loss
+                    + config.layerwise_hidden_loss_weight * layerwise_hidden_loss
+                    + config.pooled_loss_weight * pooled_loss
+                    + config.hidden_mse_loss_weight * hidden_mse_loss
+                    + config.relational_loss_weight * relational_loss
+                    + config.mlm_loss_weight * mlm_loss
+                    + config.distill_loss_weight * distill_loss
+                ) / config.gradient_accumulation
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"non-finite distillation loss at step {step + 1}")
             loss.backward()
             totals["loss"] += loss.item()
             totals["hidden"] += hidden_loss.item() / config.gradient_accumulation
+            totals["layerwise_hidden"] += layerwise_hidden_loss.item() / config.gradient_accumulation
+            totals["pooled"] += pooled_loss.item() / config.gradient_accumulation
+            totals["hidden_mse"] += hidden_mse_loss.item() / config.gradient_accumulation
+            totals["relational"] += relational_loss.item() / config.gradient_accumulation
             totals["mlm"] += mlm_loss.item() / config.gradient_accumulation
             totals["distill"] += distill_loss.item() / config.gradient_accumulation
             totals["teacher_acc"] += teacher_acc / config.gradient_accumulation
@@ -222,16 +374,25 @@ def distill(config: DistillationConfig) -> dict:
     output = Path(config.output_dir)
     if packed_student is None:
         model = MinimaModel.from_model(student.eval(), base_model=config.model, model_kind="encoder",
-                                       group_size=config.group_size, recovery_rank=config.recovery_rank)
+                                       group_size=config.group_size, recovery_rank=config.recovery_rank,
+                                       storage_format=config.storage_format,
+                                       scale_storage=config.scale_storage)
     else:
         cast_recovery_parameters(student)
         packed_student.model = student.eval()
         model = packed_student
     model.save_pretrained(output, tokenizer)
+    weight_file_bytes = (output / "model.safetensors").stat().st_size
+    if config.max_weight_file_mb and weight_file_bytes > config.max_weight_file_mb * 1_000_000:
+        raise RuntimeError(
+            f"exported weight file is {weight_file_bytes / 1_000_000:.2f} MB, "
+            f"above the {config.max_weight_file_mb:.2f} MB limit",
+        )
     report = {
         "config": config.__dict__,
         "duration_seconds": time.time() - started,
         "trainable_parameters": sum(parameter.numel() for parameter in trainable),
+        "weight_file_bytes": weight_file_bytes,
         "history": history,
     }
     (output / "training_report.json").write_text(json.dumps(report, indent=2) + "\n")

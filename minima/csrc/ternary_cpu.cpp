@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 #if defined(__AVX2__)
@@ -57,6 +58,43 @@ inline int32_t dot_avx2_32(const uint8_t* packed, const int8_t* x) {
     for (int lane = 0; lane < 4; ++lane) {
         const __m128i codes = _mm_and_si128(_mm_srli_epi16(bytes, 2 * lane), mask);
         const __m128i xv = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(x + lane * 8));
+        acc = _mm_add_epi32(acc, _mm_madd_epi16(_mm_maddubs_epi16(codes, xv), ones16));
+        xsum = _mm_add_epi32(xsum, _mm_madd_epi16(_mm_maddubs_epi16(ones8, xv), ones16));
+    }
+    return hsum128(_mm_sub_epi32(acc, xsum));
+}
+
+inline int32_t dot_avx2_16(const uint8_t* packed, const int8_t* x) {
+    int32_t packed_word;
+    std::memcpy(&packed_word, packed, sizeof(packed_word));
+    const __m128i bytes = _mm_cvtsi32_si128(packed_word);
+    const __m128i mask = _mm_set1_epi8(3);
+    const __m128i ones16 = _mm_set1_epi16(1);
+    const __m128i ones8 = _mm_set1_epi8(1);
+    __m128i acc = _mm_setzero_si128();
+    __m128i xsum = _mm_setzero_si128();
+    for (int lane = 0; lane < 4; ++lane) {
+        const __m128i codes = _mm_and_si128(_mm_srli_epi16(bytes, 2 * lane), mask);
+        int32_t xword;
+        std::memcpy(&xword, x + lane * 4, sizeof(xword));
+        const __m128i xv = _mm_cvtsi32_si128(xword);
+        acc = _mm_add_epi32(acc, _mm_madd_epi16(_mm_maddubs_epi16(codes, xv), ones16));
+        xsum = _mm_add_epi32(xsum, _mm_madd_epi16(_mm_maddubs_epi16(ones8, xv), ones16));
+    }
+    return hsum128(_mm_sub_epi32(acc, xsum));
+}
+
+inline int32_t dot_avx2_64(const uint8_t* packed, const int8_t* x) {
+    const __m128i bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(packed));
+    const __m128i mask = _mm_set1_epi8(3);
+    const __m128i ones16 = _mm_set1_epi16(1);
+    const __m128i ones8 = _mm_set1_epi8(1);
+    __m128i acc = _mm_setzero_si128();
+    __m128i xsum = _mm_setzero_si128();
+    for (int lane = 0; lane < 4; ++lane) {
+        const __m128i codes = _mm_and_si128(_mm_srli_epi16(bytes, 2 * lane), mask);
+        const __m128i xv = _mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(x + lane * 16));
         acc = _mm_add_epi32(acc, _mm_madd_epi16(_mm_maddubs_epi16(codes, xv), ones16));
         xsum = _mm_add_epi32(xsum, _mm_madd_epi16(_mm_maddubs_epi16(ones8, xv), ones16));
     }
@@ -121,7 +159,9 @@ inline int32_t dot_neon(const uint8_t* packed, const int8_t* x, int group_size) 
 
 inline int32_t dot_group(const uint8_t* packed, const int8_t* x, int group_size) {
 #if defined(__AVX2__)
+    if (group_size == 16) return dot_avx2_16(packed, x);
     if (group_size == 32) return dot_avx2_32(packed, x);
+    if (group_size == 64) return dot_avx2_64(packed, x);
     if (group_size == 128) return dot_avx2_128(packed, x);
 #endif
 #if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)

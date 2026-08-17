@@ -1,5 +1,50 @@
 {
   "cap_usd": 100.0,
+  "settled_usd": 56.1,
+  "settled_note": "Conservative reconciliation through the group-32 long adaptation and SST-2 task-distillation probes, rounded up from observed runtimes; not an invoice.",
+  "settled_job_ids": [
+    "6a82d264e55292eada79b306",
+    "6a82d27ccd3824960fcba908",
+    "6a82d323cd3824960fcba91b",
+    "6a82d35ee55292eada79b317",
+    "6a82d41ecd3824960fcba93b",
+    "6a82d4bfcd3824960fcba95d",
+    "6a82d558cd3824960fcba978",
+    "6a82d6a4e55292eada79b352",
+    "6a82d7fdcd3824960fcba9d0",
+    "6a82db3be55292eada79b38e",
+    "6a82db45cd3824960fcbaa40",
+    "6a82db5ce55292eada79b390",
+    "6a82dba1e55292eada79b392",
+    "6a82dd36e55292eada79b39e",
+    "6a82dd89cd3824960fcbaab4",
+    "6a82de54cd3824960fcbaad0",
+    "6a82df21e55292eada79b3b2",
+    "6a82df70cd3824960fcbaafc",
+    "6a82e052cd3824960fcbab1f",
+    "6a82e0becd3824960fcbab29",
+    "6a82e3b9cd3824960fcbab89",
+    "6a833ccce55292eada79b7b1",
+    "6a833e87cd3824960fcbb9cc",
+    "6a834bf3e55292eada79b83c",
+    "6a834d4fcd3824960fcbbc13",
+    "6a834e74e55292eada79b848",
+    "6a835034e55292eada79b851",
+    "6a83525ecd3824960fcbbcb1",
+    "6a835f62e55292eada79b8ec",
+    "6a836088cd3824960fcbbedf",
+    "6a83625ce55292eada79b901",
+    "6a83656fe55292eada79b925",
+    "6a836bfee55292eada79b95f",
+    "6a83670ccd3824960fcbbfc7",
+    "6a836ffbcd3824960fcbc127",
+    "6a836c2ee55292eada79b961",
+    "6a83755dcd3824960fcbc1f3",
+    "6a8376aecd3824960fcbc244",
+    "6a837911cd3824960fcbc28e",
+    "6a837a0ecd3824960fcbc2ae",
+    "6a837c49e55292eada79ba05"
+  ],
   "jobs": [
     {
       "id": "6a82d264e55292eada79b306",
@@ -189,6 +234,195 @@
       "worst_case_usd": 5.0,
       "created_at": "2026-08-17T10:34:33.263712+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a82e3b9cd3824960fcbab89"
+    },
+    {
+      "id": "6a833ccce55292eada79b7b1",
+      "name": "strict-qat-g128-5k",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T16:54:36.338471+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a833ccce55292eada79b7b1"
+    },
+    {
+      "id": "6a833e87cd3824960fcbb9cc",
+      "name": "strict-qat-g128-4500",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T17:01:59.371334+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a833e87cd3824960fcbb9cc"
+    },
+    {
+      "id": "6a834bf3e55292eada79b83c",
+      "name": "strict-artifact-probe",
+      "flavor": "h200",
+      "timeout": "20m",
+      "worst_case_usd": 1.6667,
+      "created_at": "2026-08-17T17:59:15.430710+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a834bf3e55292eada79b83c"
+    },
+    {
+      "id": "6a834d4fcd3824960fcbbc13",
+      "name": "strict-six-task-quality-gate",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T18:05:03.660443+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a834d4fcd3824960fcbbc13"
+    },
+    {
+      "id": "6a834e74e55292eada79b848",
+      "name": "strict-rate-calibration",
+      "flavor": "h200",
+      "timeout": "20m",
+      "worst_case_usd": 1.6667,
+      "created_at": "2026-08-17T18:09:56.850381+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a834e74e55292eada79b848"
+    },
+    {
+      "id": "6a835034e55292eada79b851",
+      "name": "strict-g64-progressive-qat",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T18:17:24.679200+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a835034e55292eada79b851"
+    },
+    {
+      "id": "6a83525ecd3824960fcbbcb1",
+      "name": "strict-g64-progressive-qat-4100",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T18:26:38.508163+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a83525ecd3824960fcbbcb1"
+    },
+    {
+      "id": "6a835f62e55292eada79b8ec",
+      "name": "strict-g64-artifact-probe",
+      "flavor": "h200",
+      "timeout": "20m",
+      "worst_case_usd": 1.6667,
+      "created_at": "2026-08-17T19:22:10.868438+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a835f62e55292eada79b8ec"
+    },
+    {
+      "id": "6a836088cd3824960fcbbedf",
+      "name": "strict-g64-rate-calibration",
+      "flavor": "h200",
+      "timeout": "20m",
+      "worst_case_usd": 1.6667,
+      "created_at": "2026-08-17T19:27:04.298411+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a836088cd3824960fcbbedf"
+    },
+    {
+      "id": "6a83625ce55292eada79b901",
+      "name": "strict-g64-long-tuning-calibration",
+      "flavor": "h200",
+      "timeout": "20m",
+      "worst_case_usd": 1.6667,
+      "created_at": "2026-08-17T19:34:52.554520+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a83625ce55292eada79b901"
+    },
+    {
+      "id": "6a83656fe55292eada79b925",
+      "name": "strict-representation-continuation-probe",
+      "flavor": "h200",
+      "timeout": "15m",
+      "worst_case_usd": 1.25,
+      "created_at": "2026-08-17T19:47:59.545528+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a83656fe55292eada79b925"
+    },
+    {
+      "id": "6a83670ccd3824960fcbbfc7",
+      "name": "strict-representation-continuation-5k",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T19:54:52.561900+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a83670ccd3824960fcbbfc7"
+    },
+    {
+      "id": "6a836bfee55292eada79b95f",
+      "name": "strict-g32-base3-progressive-qat",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T20:15:58.270388+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a836bfee55292eada79b95f"
+    },
+    {
+      "id": "6a836c2ee55292eada79b961",
+      "name": "strict-g32-base3-progressive-qat-r2",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T20:16:46.207925+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a836c2ee55292eada79b961"
+    },
+    {
+      "id": "6a836ffbcd3824960fcbc127",
+      "name": "g64-repr-v2-rate-calibration",
+      "flavor": "h200",
+      "timeout": "15m",
+      "worst_case_usd": 1.25,
+      "created_at": "2026-08-17T20:32:59.450820+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a836ffbcd3824960fcbc127"
+    },
+    {
+      "id": "6a83755dcd3824960fcbc1f3",
+      "name": "g32-base3-rate-calibration",
+      "flavor": "h200",
+      "timeout": "15m",
+      "worst_case_usd": 1.25,
+      "created_at": "2026-08-17T20:55:57.851986+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a83755dcd3824960fcbc1f3"
+    },
+    {
+      "id": "6a8376aecd3824960fcbc244",
+      "name": "g32-geometry-continuation-probe",
+      "flavor": "h200",
+      "timeout": "15m",
+      "worst_case_usd": 1.25,
+      "created_at": "2026-08-17T21:01:34.714457+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a8376aecd3824960fcbc244"
+    },
+    {
+      "id": "6a837911cd3824960fcbc28e",
+      "name": "g32-geometry-rate-calibration",
+      "flavor": "h200",
+      "timeout": "15m",
+      "worst_case_usd": 1.25,
+      "created_at": "2026-08-17T21:11:45.627515+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a837911cd3824960fcbc28e"
+    },
+    {
+      "id": "6a837a0ecd3824960fcbc2ae",
+      "name": "g32-base3-long-tuning-calibration",
+      "flavor": "h200",
+      "timeout": "20m",
+      "worst_case_usd": 1.6667,
+      "created_at": "2026-08-17T21:15:58.895161+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a837a0ecd3824960fcbc2ae"
+    },
+    {
+      "id": "6a837c49e55292eada79ba05",
+      "name": "g32-sst2-task-distillation",
+      "flavor": "h200",
+      "timeout": "15m",
+      "worst_case_usd": 1.25,
+      "created_at": "2026-08-17T21:25:29.934544+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a837c49e55292eada79ba05"
+    },
+    {
+      "id": "6a837f5ecd3824960fcbc36a",
+      "name": "strict-g16-rowwise-progressive-qat",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T21:38:38.448361+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a837f5ecd3824960fcbc36a"
     }
   ]
 }

@@ -16,6 +16,7 @@ from huggingface_hub import HfApi
 
 def benchmark(kind: str, model: str, threads: int, output: Path, engine: str | None = None) -> dict:
     env = os.environ.copy()
+    env["MINIMA_CPU_BACKEND"] = "dynamic_int8"
     if engine:
         env["MINIMA_QUANTIZED_ENGINE"] = engine
     command = [

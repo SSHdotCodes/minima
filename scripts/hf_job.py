@@ -40,7 +40,10 @@ def main():
     minutes = parse_duration(args.timeout)
     reservation = hardware[args.flavor].unit_cost_usd * minutes
     ledger = json.loads(LEDGER.read_text()) if LEDGER.exists() else {"cap_usd": CAP_USD, "jobs": []}
-    reserved = sum(item["worst_case_usd"] for item in ledger["jobs"])
+    settled_ids = set(ledger.get("settled_job_ids", []))
+    reserved = ledger.get("settled_usd", 0.0) + sum(
+        item["worst_case_usd"] for item in ledger["jobs"] if item["id"] not in settled_ids
+    )
     if reserved + reservation > CAP_USD:
         raise SystemExit(f"refusing launch: ${reserved + reservation:.2f} would exceed ${CAP_USD:.2f} cap")
     token = get_token()
@@ -69,4 +72,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

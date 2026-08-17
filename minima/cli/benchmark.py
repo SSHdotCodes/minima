@@ -29,9 +29,16 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--threads", type=int, default=0)
+    parser.add_argument(
+        "--cpu-backend",
+        choices=("dynamic_int8", "i2s"),
+        help="CPU backend for Minima; defaults to MINIMA_CPU_BACKEND or dynamic_int8",
+    )
     parser.add_argument("--only", choices=("base", "minima", "both"), default="both")
     parser.add_argument("--output")
     args = parser.parse_args(argv)
+    if args.cpu_backend:
+        os.environ["MINIMA_CPU_BACKEND"] = args.cpu_backend
     if args.threads:
         torch.set_num_threads(args.threads)
     tokenizer = AutoTokenizer.from_pretrained(args.base, trust_remote_code=True)
