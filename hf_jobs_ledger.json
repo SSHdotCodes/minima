@@ -1,7 +1,7 @@
 {
   "cap_usd": 100.0,
-  "settled_usd": 34.0,
-  "settled_note": "Conservative reconciliation through strict rate calibration, rounded up from observed runtimes; not an invoice.",
+  "settled_usd": 35.0,
+  "settled_note": "Conservative reconciliation through the resized group-64 curriculum run, rounded up from observed runtimes; not an invoice.",
   "settled_job_ids": [
     "6a82d264e55292eada79b306",
     "6a82d27ccd3824960fcba908",
@@ -28,7 +28,8 @@
     "6a833e87cd3824960fcbb9cc",
     "6a834bf3e55292eada79b83c",
     "6a834d4fcd3824960fcbbc13",
-    "6a834e74e55292eada79b848"
+    "6a834e74e55292eada79b848",
+    "6a835034e55292eada79b851"
   ],
   "jobs": [
     {
@@ -273,6 +274,15 @@
       "worst_case_usd": 5.0,
       "created_at": "2026-08-17T18:17:24.679200+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a835034e55292eada79b851"
+    },
+    {
+      "id": "6a83525ecd3824960fcbbcb1",
+      "name": "strict-g64-progressive-qat-4100",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T18:26:38.508163+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a83525ecd3824960fcbbcb1"
     }
   ]
 }
