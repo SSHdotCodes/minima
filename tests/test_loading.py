@@ -32,3 +32,43 @@ def test_nonpersistent_rope_buffers_are_materialized():
     _materialize_derived_buffers(module)
     assert module.inv_freq.device.type == "cpu"
     torch.testing.assert_close(module.inv_freq, torch.arange(8, dtype=torch.float32))
+
+
+def test_cuda_artifacts_use_one_floating_runtime_dtype(monkeypatch, tmp_path):
+    """FP32 QAT residual tensors must not promote an FP16 packed stream."""
+    from minima import modeling
+
+    class FakeModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm = nn.LayerNorm(4, dtype=torch.float32)
+            self.register_buffer("codes", torch.ones(4, dtype=torch.uint8))
+            self.config = object()
+
+        def get_input_embeddings(self):
+            return None
+
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "minima_config.json").write_text(
+        '{"format_version": 1, "base_model": "fake", "base_revision": null, '
+        '"model_kind": "encoder", "modules": {}}'
+    )
+    state = FakeModel().state_dict()
+
+    monkeypatch.setattr(modeling.AutoConfig, "from_pretrained", lambda *args, **kwargs: object())
+    monkeypatch.setattr(modeling, "build_lfm_encoder", lambda config: FakeModel())
+    monkeypatch.setattr(modeling, "load_file", lambda *args, **kwargs: state)
+    monkeypatch.setattr(modeling, "_materialize_derived_buffers", lambda model: None)
+
+    original_to = FakeModel.to
+
+    def record_cuda_to(self, *args, **kwargs):
+        # Exercise dtype conversion without requiring a CUDA runner in CI.
+        assert kwargs["device"] == torch.device("cuda")
+        return original_to(self, dtype=kwargs["dtype"])
+
+    monkeypatch.setattr(FakeModel, "to", record_cuda_to)
+    loaded = modeling.MinimaModel.from_pretrained(artifact, device="cuda")
+    assert loaded.model.norm.weight.dtype == torch.float16
+    assert loaded.model.codes.dtype == torch.uint8

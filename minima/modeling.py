@@ -272,8 +272,18 @@ class MinimaModel(nn.Module):
                           if value.device.type == "meta"]
         if remaining_meta:
             raise RuntimeError(f"unmaterialized artifact tensors: {remaining_meta}")
-        model.to(device)
-        if torch.device(device).type == "cpu":
+        target_device = torch.device(device)
+        if target_device.type == "cuda":
+            # Full-weight QAT checkpoints intentionally retain FP32 latent
+            # non-matrix parameters while training. The packed input embedding
+            # is decoded to FP16 at runtime, so leaving norms and convolutions
+            # in FP32 promotes the residual stream and makes attention queries
+            # disagree with the FP16 attention mask. Keep every floating
+            # runtime tensor aligned with the fused Triton output dtype.
+            model.to(device=target_device, dtype=torch.float16)
+        else:
+            model.to(target_device)
+        if target_device.type == "cpu":
             # The upstream artifact keeps non-matrix tensors in FP16. Promoting
             # the small residual set avoids mixed-dtype CPU conv/linear errors;
             # packed uint8 weights are unchanged.
