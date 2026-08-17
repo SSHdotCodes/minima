@@ -153,6 +153,15 @@
       "worst_case_usd": 1.9,
       "created_at": "2026-08-17T10:14:57.547499+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a82df21e55292eada79b3b2"
+    },
+    {
+      "id": "6a82df70cd3824960fcbaafc",
+      "name": "spellcheck-distillation-r3",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T10:16:16.424181+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a82df70cd3824960fcbaafc"
     }
   ]
 }
