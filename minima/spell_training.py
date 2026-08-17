@@ -184,6 +184,10 @@ def distill_spellchecker(config: SpellDistillationConfig) -> dict:
     packed.model = student.eval()
     output = Path(config.output_dir)
     packed.save_pretrained(output, tokenizer)
+    api = HfApi()
+    api.create_repo(config.output_repo, repo_type="model", exist_ok=True)
+    api.upload_folder(repo_id=config.output_repo, folder_path=output, repo_type="model",
+                      commit_message="Upload trained Minima spellchecker checkpoint")
     label_matches = detect_matches = valid_tokens = 0
     held_out = []
     with torch.inference_mode():
@@ -238,9 +242,8 @@ def distill_spellchecker(config: SpellDistillationConfig) -> dict:
                      for text, a, b in zip(examples, example_teacher, example_student)],
         "history": history,
     }
-    (output / "spellcheck_report.json").write_text(json.dumps(report, indent=2) + "\n")
-    api = HfApi()
-    api.create_repo(config.output_repo, repo_type="model", exist_ok=True)
-    api.upload_folder(repo_id=config.output_repo, folder_path=output, repo_type="model",
-                      commit_message="Upload distilled Minima spellchecker")
+    report_path = output / "spellcheck_report.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n")
+    api.upload_file(repo_id=config.output_repo, repo_type="model", path_or_fileobj=report_path,
+                    path_in_repo="spellcheck_report.json", commit_message="Upload spellchecker evaluation")
     return report

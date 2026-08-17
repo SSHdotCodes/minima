@@ -16,8 +16,8 @@ def patch_tied_vocab_projection(model):
         replace_hidden = this.replace_proj(hidden)
         append_hidden = this.append_proj(hidden)
         if hasattr(embedding, "project"):
-            rep = embedding.project(replace_hidden) + this.replace_bias
-            app = embedding.project(append_hidden) + this.append_bias
+            rep = embedding.project(replace_hidden)[..., : this.vocab_size] + this.replace_bias
+            app = embedding.project(append_hidden)[..., : this.vocab_size] + this.append_bias
         else:
             weight = embedding.weight[: this.vocab_size]
             rep = replace_hidden @ weight.t() + this.replace_bias
@@ -26,4 +26,3 @@ def patch_tied_vocab_projection(model):
 
     model._label_logits = types.MethodType(_label_logits, model)
     return model
-
