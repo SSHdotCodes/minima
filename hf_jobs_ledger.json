@@ -403,6 +403,15 @@
       "worst_case_usd": 1.6667,
       "created_at": "2026-08-17T21:15:58.895161+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a837a0ecd3824960fcbc2ae"
+    },
+    {
+      "id": "6a837c49e55292eada79ba05",
+      "name": "g32-sst2-task-distillation",
+      "flavor": "h200",
+      "timeout": "15m",
+      "worst_case_usd": 1.25,
+      "created_at": "2026-08-17T21:25:29.934544+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a837c49e55292eada79ba05"
     }
   ]
 }
