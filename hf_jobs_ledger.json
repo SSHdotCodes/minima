@@ -1,7 +1,7 @@
 {
   "cap_usd": 100.0,
-  "settled_usd": 48.1,
-  "settled_note": "Conservative reconciliation through the 5k group-64 representation continuation plus the 8-second failed group-32 setup, rounded up from observed runtimes; not an invoice.",
+  "settled_usd": 48.5,
+  "settled_note": "Conservative reconciliation through the group-64-v2 task calibration plus the 8-second failed group-32 setup, rounded up from observed runtimes; not an invoice.",
   "settled_job_ids": [
     "6a82d264e55292eada79b306",
     "6a82d27ccd3824960fcba908",
@@ -36,7 +36,8 @@
     "6a83625ce55292eada79b901",
     "6a83656fe55292eada79b925",
     "6a836bfee55292eada79b95f",
-    "6a83670ccd3824960fcbbfc7"
+    "6a83670ccd3824960fcbbfc7",
+    "6a836ffbcd3824960fcbc127"
   ],
   "jobs": [
     {
