@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/wh
 WORKDIR /app
 COPY app.py /app/app.py
 ENV MINIMA_MODEL=ProCreations/minima-spellcheck
+ENV MINIMA_QUANTIZED_ENGINE=fbgemm
 ENV OMP_NUM_THREADS=2
 EXPOSE 7860
 CMD ["python", "app.py"]

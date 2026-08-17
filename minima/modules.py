@@ -24,6 +24,8 @@ def _dynamic_int8_linear(weight: torch.Tensor, bias: torch.Tensor | None) -> nn.
         if requested_engine not in torch.backends.quantized.supported_engines:
             raise RuntimeError(f"unsupported quantized engine: {requested_engine}")
         torch.backends.quantized.engine = requested_engine
+    elif "fbgemm" in torch.backends.quantized.supported_engines:
+        torch.backends.quantized.engine = "fbgemm"
     elif torch.backends.quantized.engine == "none":
         for engine in ("x86", "fbgemm", "qnnpack"):
             if engine in torch.backends.quantized.supported_engines:
