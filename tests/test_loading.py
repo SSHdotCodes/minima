@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 
 from minima.loading import encoder_from_mlm
-from minima.modeling import _materialize_derived_buffers
+from minima.modeling import _materialize_derived_buffers, _transcode_packed_state
+from minima.quantization import pack_i2s
 
 
 class Wrapper(nn.Module):
@@ -32,6 +33,21 @@ def test_nonpersistent_rope_buffers_are_materialized():
     _materialize_derived_buffers(module)
     assert module.inv_freq.device.type == "cpu"
     torch.testing.assert_close(module.inv_freq, torch.arange(8, dtype=torch.float32))
+
+
+def test_base3_checkpoint_state_expands_to_i2s_runtime():
+    trits = torch.randint(-1, 2, (3, 64), dtype=torch.int8)
+    runtime = pack_i2s(trits, 32)
+    metadata = {
+        "storage_format": "base3",
+        "modules": {"projection": {"group_size": 32}},
+    }
+    stored = _transcode_packed_state(
+        {"projection.packed_weight": runtime.clone()}, metadata, loading=False,
+    )
+    assert stored["projection.packed_weight"].shape == (3, 2, 7)
+    restored = _transcode_packed_state(stored, metadata, loading=True)
+    torch.testing.assert_close(restored["projection.packed_weight"], runtime)
 
 
 def test_cuda_artifacts_use_one_floating_runtime_dtype(monkeypatch, tmp_path):
