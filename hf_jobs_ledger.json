@@ -9,6 +9,15 @@
       "worst_case_usd": 10.0,
       "created_at": "2026-08-17T09:20:36.120625+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a82d264e55292eada79b306"
+    },
+    {
+      "id": "6a82d27ccd3824960fcba908",
+      "name": "ptq-probe-g128-r2",
+      "flavor": "h200",
+      "timeout": "2h",
+      "worst_case_usd": 10.0,
+      "created_at": "2026-08-17T09:21:00.892822+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a82d27ccd3824960fcba908"
     }
   ]
 }
