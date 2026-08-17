@@ -1,7 +1,7 @@
 {
   "cap_usd": 100.0,
-  "settled_usd": 44.1,
-  "settled_note": "Conservative reconciliation through the representation-continuation probe plus the 8-second failed group-32 setup, rounded up from observed runtimes; not an invoice.",
+  "settled_usd": 48.1,
+  "settled_note": "Conservative reconciliation through the 5k group-64 representation continuation plus the 8-second failed group-32 setup, rounded up from observed runtimes; not an invoice.",
   "settled_job_ids": [
     "6a82d264e55292eada79b306",
     "6a82d27ccd3824960fcba908",
@@ -35,7 +35,8 @@
     "6a836088cd3824960fcbbedf",
     "6a83625ce55292eada79b901",
     "6a83656fe55292eada79b925",
-    "6a836bfee55292eada79b95f"
+    "6a836bfee55292eada79b95f",
+    "6a83670ccd3824960fcbbfc7"
   ],
   "jobs": [
     {
@@ -352,6 +353,15 @@
       "worst_case_usd": 5.0,
       "created_at": "2026-08-17T20:16:46.207925+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a836c2ee55292eada79b961"
+    },
+    {
+      "id": "6a836ffbcd3824960fcbc127",
+      "name": "g64-repr-v2-rate-calibration",
+      "flavor": "h200",
+      "timeout": "15m",
+      "worst_case_usd": 1.25,
+      "created_at": "2026-08-17T20:32:59.450820+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a836ffbcd3824960fcbc127"
     }
   ]
 }
