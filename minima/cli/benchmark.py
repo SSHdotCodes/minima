@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import resource
 import statistics
 import time
@@ -28,16 +29,26 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--threads", type=int, default=0)
+    parser.add_argument("--only", choices=("base", "minima", "both"), default="both")
     parser.add_argument("--output")
     args = parser.parse_args(argv)
     if args.threads:
         torch.set_num_threads(args.threads)
     tokenizer = AutoTokenizer.from_pretrained(args.base, trust_remote_code=True)
-    results = {"kernel": kernel_status(), "threads": torch.get_num_threads(), "measurements": []}
-    for name, loader in (
+    results = {
+        "kernel": kernel_status(),
+        "threads": torch.get_num_threads(),
+        "platform": platform.platform(),
+        "processor": platform.processor(),
+        "measurements": [],
+    }
+    loaders = (
         ("base_fp32", lambda: load_lfm_encoder(args.base).eval()),
         ("minima", lambda: MinimaModel.from_pretrained(args.model).eval()),
-    ):
+    )
+    for name, loader in loaders:
+        if args.only != "both" and not name.startswith(args.only):
+            continue
         before = _rss_mb()
         model = loader()
         loaded = _rss_mb()
