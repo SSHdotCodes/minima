@@ -30,7 +30,8 @@ def _validate_matrix(weight: torch.Tensor, group_size: int) -> tuple[int, int, i
     return rows, cols, groups
 
 
-def ternary_values(weight: torch.Tensor, group_size: int = 128) -> tuple[torch.Tensor, torch.Tensor]:
+def ternary_values(weight: torch.Tensor, group_size: int = 128,
+                   scale: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     """Return int8 trits and per-row/per-group absmean scales.
 
     Padding is appended on the input-feature dimension and is always encoded as
@@ -47,15 +48,23 @@ def ternary_values(weight: torch.Tensor, group_size: int = 128) -> tuple[torch.T
         valid[..., -(padded_cols - cols) :] = 0
     denom = valid.sum(dim=-1).clamp_min(1)
     absolute = view.abs()
-    scale = (absolute * valid).sum(dim=-1) / denom
-    scale = scale.clamp_min(torch.finfo(torch.float32).eps)
-    # Lloyd-Max updates minimize per-group squared reconstruction error for a
-    # symmetric three-level codebook {-scale, 0, +scale}. Three iterations are
-    # enough for stable partitions at these small group sizes.
-    for _ in range(3):
-        nonzero = (absolute >= scale.unsqueeze(-1) * 0.5) & valid.bool()
-        scale = (absolute * nonzero).sum(dim=-1) / nonzero.sum(dim=-1).clamp_min(1)
+    if scale is None:
+        scale = (absolute * valid).sum(dim=-1) / denom
         scale = scale.clamp_min(torch.finfo(torch.float32).eps)
+        # Lloyd-Max updates minimize per-group squared reconstruction error for a
+        # symmetric three-level codebook {-scale, 0, +scale}. Three iterations are
+        # enough for stable partitions at these small group sizes.
+        for _ in range(3):
+            nonzero = (absolute >= scale.unsqueeze(-1) * 0.5) & valid.bool()
+            scale = (absolute * nonzero).sum(dim=-1) / nonzero.sum(dim=-1).clamp_min(1)
+            scale = scale.clamp_min(torch.finfo(torch.float32).eps)
+    else:
+        if tuple(scale.shape) != (rows, groups):
+            raise ValueError(f"scale must have shape {(rows, groups)}, got {tuple(scale.shape)}")
+        scale = scale.detach().to(device=work.device, dtype=torch.float32).clamp_min(
+            torch.finfo(torch.float32).eps,
+        )
+        nonzero = (absolute >= scale.unsqueeze(-1) * 0.5) & valid.bool()
     trits = (view.sign() * nonzero).to(torch.int8)
     trits = trits * valid.to(torch.int8)
     return trits.view(rows, padded_cols), scale
@@ -97,8 +106,9 @@ def unpack_i2s(packed: torch.Tensor, cols: int, group_size: int = 128) -> torch.
     return values[:, :cols].contiguous()
 
 
-def quantize_ternary(weight: torch.Tensor, group_size: int = 128) -> QuantizedWeight:
-    trits, scale = ternary_values(weight, group_size)
+def quantize_ternary(weight: torch.Tensor, group_size: int = 128,
+                     scale: torch.Tensor | None = None) -> QuantizedWeight:
+    trits, scale = ternary_values(weight, group_size, scale)
     return QuantizedWeight(
         packed=pack_i2s(trits, group_size).cpu(),
         scale=scale.to(torch.float16).cpu(),
@@ -120,20 +130,32 @@ def dequantize(qweight: QuantizedWeight, *, device: torch.device | str | None = 
     return (values * scale).view(rows, padded)[:, :cols].contiguous()
 
 
-def fake_quantize_weight(weight: torch.Tensor, group_size: int = 128) -> torch.Tensor:
-    """Straight-through ternary fake quantization for QAT."""
+def fake_quantize_weight(weight: torch.Tensor, group_size: int = 128,
+                         scale: torch.Tensor | None = None) -> torch.Tensor:
+    """Straight-through ternary fake quantization for latent weights and scales."""
     rows, cols, groups = _validate_matrix(weight, group_size)
     padded_cols = groups * group_size
     work = weight if cols == padded_cols else torch.nn.functional.pad(weight, (0, padded_cols - cols))
     view = work.view(rows, groups, group_size)
     absolute = view.detach().abs()
-    scale = absolute.mean(dim=-1, keepdim=True).clamp_min(1e-8)
-    for _ in range(3):
-        nonzero = absolute >= scale * 0.5
-        scale = ((absolute * nonzero).sum(dim=-1, keepdim=True) /
-                 nonzero.sum(dim=-1, keepdim=True).clamp_min(1)).clamp_min(1e-8)
-    quant = view.sign() * nonzero * scale
-    quant = view + (quant - view).detach()
+    if scale is None:
+        active_scale = absolute.mean(dim=-1, keepdim=True).clamp_min(1e-8)
+        for _ in range(3):
+            nonzero = absolute >= active_scale * 0.5
+            active_scale = ((absolute * nonzero).sum(dim=-1, keepdim=True) /
+                            nonzero.sum(dim=-1, keepdim=True).clamp_min(1)).clamp_min(1e-8)
+    else:
+        if tuple(scale.shape) != (rows, groups):
+            raise ValueError(f"scale must have shape {(rows, groups)}, got {tuple(scale.shape)}")
+        active_scale = scale.to(dtype=view.dtype).clamp_min(1e-8).unsqueeze(-1)
+        nonzero = absolute >= active_scale.detach() * 0.5
+    code = view.detach().sign() * nonzero
+    target = code * active_scale
+    # Identity STE for the latent weight plus the true derivative for a learned
+    # group scale. The second term is zero in the forward pass.
+    quant = view + (target - view).detach()
+    if scale is not None:
+        quant = quant + target - target.detach()
     return quant.view(rows, padded_cols)[:, :cols]
 
 

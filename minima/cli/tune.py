@@ -11,7 +11,7 @@ from minima.tuning import MinimaForSequenceClassification, enable_recovery_train
 
 
 def main(argv: list[str] | None = None):
-    parser = argparse.ArgumentParser(description="Tune Minima recovery adapters for text classification")
+    parser = argparse.ArgumentParser(description="Tune Minima for text classification")
     parser.add_argument("model")
     parser.add_argument("dataset")
     parser.add_argument("output")
@@ -32,7 +32,17 @@ def main(argv: list[str] | None = None):
     args = parser.parse_args(argv)
 
     encoder = MinimaModel.from_pretrained(args.model, device="cuda")
-    trainable = enable_recovery_training(encoder)
+    has_recovery = any(
+        descriptor.get("recovery_rank", 0)
+        for descriptor in encoder.minima_metadata["modules"].values()
+    )
+    if has_recovery:
+        trainable = enable_recovery_training(encoder)
+    else:
+        encoder.prepare_qat().float()
+        for parameter in encoder.parameters():
+            parameter.requires_grad_(True)
+        trainable = sum(parameter.numel() for parameter in encoder.parameters())
     model = MinimaForSequenceClassification(encoder, args.num_labels, args.pooling).cuda()
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     dataset = load_dataset(args.dataset, args.dataset_config)
@@ -74,13 +84,15 @@ def main(argv: list[str] | None = None):
     trainer = Trainer(model=model, args=training_args, train_dataset=prepared[args.train_split],
                       eval_dataset=prepared[args.eval_split], compute_metrics=metrics,
                       processing_class=tokenizer)
-    print(f"trainable recovery parameters: {trainable:,}")
+    print(f"trainable encoder parameters: {trainable:,}")
     trainer.train()
     print(trainer.evaluate())
-    model.save_adapter(args.output, args.model)
-    tokenizer.save_pretrained(args.output)
+    if has_recovery:
+        model.save_adapter(args.output, args.model)
+        tokenizer.save_pretrained(args.output)
+    else:
+        model.save_full_tuned(args.output, tokenizer)
 
 
 if __name__ == "__main__":
     main()
-

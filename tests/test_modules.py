@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from minima.kernels.reference import reference_linear
+from minima.modeling import unpack_for_qat
 from minima.modules import (
     PackedTernaryEmbedding,
     PackedTernaryLinear,
@@ -89,9 +90,32 @@ def test_qat_modules_backpropagate():
     linear(x).square().mean().backward()
     assert x.grad is not None
     assert linear.weight.grad is not None
+    assert linear.log_scale.grad is not None
     assert linear.recovery_a.grad is not None
 
     embedding = TernaryEmbedding.from_float(nn.Embedding(13, 128), 128, recovery_rank=4)
     embedding(torch.tensor([[1, 2, 3]])).sum().backward()
     assert embedding.weight.grad is not None
+    assert embedding.log_scale.grad is not None
     assert embedding.recovery_a.grad is not None
+
+
+def test_qat_learned_scale_is_exported_without_recovery():
+    torch.manual_seed(6)
+    linear = TernaryLinear.from_float(nn.Linear(128, 17), group_size=128, recovery_rank=0)
+    linear.log_scale.data.add_(0.2)
+    packed = PackedTernaryLinear.from_float(linear, group_size=128)
+    torch.testing.assert_close(packed.weight_scale, linear.log_scale.exp().half(), rtol=1e-3, atol=1e-5)
+    assert packed.recovery_rank == 0
+
+
+def test_strict_packed_model_can_expand_for_full_weight_qat():
+    torch.manual_seed(7)
+    packed = PackedTernaryLinear.from_float(nn.Linear(128, 17), group_size=128)
+    model = nn.Sequential(packed)
+    x = torch.randn(3, 128)
+    expected = model(x)
+    unpack_for_qat(model)
+    assert isinstance(model[0], TernaryLinear)
+    assert model[0].recovery_rank == 0
+    torch.testing.assert_close(model(x), expected, rtol=2e-3, atol=2e-3)

@@ -1,6 +1,13 @@
 import torch
 
-from minima.quantization import QuantizedWeight, dequantize, pack_i2s, quantize_ternary, unpack_i2s
+from minima.quantization import (
+    QuantizedWeight,
+    dequantize,
+    fake_quantize_weight,
+    pack_i2s,
+    quantize_ternary,
+    unpack_i2s,
+)
 
 
 def test_i2s_roundtrip_multiple_groups():
@@ -28,3 +35,13 @@ def test_dequantize_known_values():
     quant = QuantizedWeight(packed, torch.tensor([[0.5]], dtype=torch.float16), (1, 32), 32)
     torch.testing.assert_close(dequantize(quant), trits.float() * 0.5)
 
+
+def test_explicit_group_scale_has_gradients_and_survives_export():
+    torch.manual_seed(8)
+    weight = torch.randn(3, 128, requires_grad=True)
+    scale = torch.full((3, 1), 0.25, requires_grad=True)
+    fake_quantize_weight(weight, 128, scale).square().mean().backward()
+    assert weight.grad is not None
+    assert scale.grad is not None
+    quant = quantize_ternary(weight, 128, scale)
+    torch.testing.assert_close(quant.scale, scale.detach().half())

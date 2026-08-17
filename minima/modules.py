@@ -14,6 +14,7 @@ from .quantization import (
     fake_quantize_activation,
     fake_quantize_weight,
     quantize_ternary,
+    ternary_values,
 )
 
 
@@ -68,6 +69,8 @@ class TernaryLinear(nn.Module):
         self.group_size = group_size
         self.activation_quant = activation_quant
         self.weight = nn.Parameter(torch.empty(out_features, in_features, device=device, dtype=dtype))
+        groups = (in_features + group_size - 1) // group_size
+        self.log_scale = nn.Parameter(torch.empty(out_features, groups, device=device, dtype=dtype))
         self.bias = nn.Parameter(torch.empty(out_features, device=device, dtype=dtype)) if bias else None
         self.recovery_rank = recovery_rank
         if recovery_rank:
@@ -81,9 +84,15 @@ class TernaryLinear(nn.Module):
 
     def reset_parameters(self):
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        self.reset_scale()
         if self.bias is not None:
             bound = 1 / math.sqrt(self.in_features)
             nn.init.uniform_(self.bias, -bound, bound)
+
+    @torch.no_grad()
+    def reset_scale(self):
+        _, scale = ternary_values(self.weight, self.group_size)
+        self.log_scale.copy_(scale.log().to(device=self.log_scale.device, dtype=self.log_scale.dtype))
 
     @classmethod
     def from_float(cls, module: nn.Linear, group_size: int = 128, recovery_rank: int = 0,
@@ -91,13 +100,18 @@ class TernaryLinear(nn.Module):
         result = cls(module.in_features, module.out_features, module.bias is not None, group_size,
                      recovery_rank, activation_quant, device=module.weight.device, dtype=module.weight.dtype)
         result.weight.data.copy_(module.weight.data)
+        result.reset_scale()
         if module.bias is not None:
             result.bias.data.copy_(module.bias.data)
         return result
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         qx = fake_quantize_activation(x, self.group_size) if self.activation_quant else x
-        output = F.linear(qx, fake_quantize_weight(self.weight, self.group_size), self.bias)
+        output = F.linear(
+            qx,
+            fake_quantize_weight(self.weight, self.group_size, self.log_scale.exp()),
+            self.bias,
+        )
         if self.recovery_rank:
             output = output + F.linear(F.linear(x, self.recovery_b), self.recovery_a)
         return output
@@ -108,6 +122,11 @@ class TernaryEmbedding(nn.Embedding):
         super().__init__(*args, **kwargs)
         self.group_size = group_size
         self.recovery_rank = recovery_rank
+        groups = (self.embedding_dim + group_size - 1) // group_size
+        _, scale = ternary_values(self.weight, group_size)
+        self.log_scale = nn.Parameter(
+            scale.log().to(device=self.weight.device, dtype=self.weight.dtype).reshape(self.num_embeddings, groups),
+        )
         if recovery_rank:
             self.recovery_a = nn.Parameter(torch.zeros(self.num_embeddings, recovery_rank,
                                                        device=self.weight.device, dtype=self.weight.dtype))
@@ -129,7 +148,7 @@ class TernaryEmbedding(nn.Embedding):
         return result
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        weight = fake_quantize_weight(self.weight, self.group_size)
+        weight = fake_quantize_weight(self.weight, self.group_size, self.log_scale.exp())
         output = F.embedding(input_ids, weight, self.padding_idx, self.max_norm, self.norm_type,
                              self.scale_grad_by_freq, self.sparse)
         if self.recovery_rank:
@@ -137,7 +156,7 @@ class TernaryEmbedding(nn.Embedding):
         return output
 
     def project(self, hidden: torch.Tensor) -> torch.Tensor:
-        weight = fake_quantize_weight(self.weight, self.group_size)
+        weight = fake_quantize_weight(self.weight, self.group_size, self.log_scale.exp())
         output = F.linear(fake_quantize_activation(hidden, self.group_size), weight)
         if self.recovery_rank:
             output = output + F.linear(F.linear(hidden, self.recovery_b), self.recovery_a)
@@ -168,7 +187,8 @@ class PackedTernaryLinear(nn.Module):
     def from_float(cls, module: nn.Linear | TernaryLinear, group_size: int | None = None,
                    recovery_rank: int = 0) -> "PackedTernaryLinear":
         group_size = group_size or getattr(module, "group_size", 128)
-        qweight = quantize_ternary(module.weight, group_size)
+        scale = module.log_scale.exp() if isinstance(module, TernaryLinear) else None
+        qweight = quantize_ternary(module.weight, group_size, scale)
         recovery_a = recovery_b = None
         if isinstance(module, TernaryLinear) and module.recovery_rank:
             recovery_a = module.recovery_a.detach().to(torch.float16).cpu()
@@ -251,7 +271,8 @@ class PackedTernaryEmbedding(nn.Module):
     def from_float(cls, module: nn.Embedding | TernaryEmbedding,
                    group_size: int | None = None, recovery_rank: int = 0) -> "PackedTernaryEmbedding":
         group_size = group_size or getattr(module, "group_size", 128)
-        qweight = quantize_ternary(module.weight, group_size)
+        scale = module.log_scale.exp() if isinstance(module, TernaryEmbedding) else None
+        qweight = quantize_ternary(module.weight, group_size, scale)
         recovery_a = recovery_b = None
         if isinstance(module, TernaryEmbedding) and module.recovery_rank:
             recovery_a = module.recovery_a.detach().to(torch.float16).cpu()

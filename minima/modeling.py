@@ -20,6 +20,7 @@ from .modules import (
     TernaryLinear,
     optimize_cpu_model,
 )
+from .quantization import QuantizedWeight, dequantize
 from .spellcheck import patch_tied_vocab_projection
 
 FORMAT_VERSION = 1
@@ -36,7 +37,7 @@ def _parent_and_name(root: nn.Module, path: str) -> tuple[nn.Module, str]:
 def prepare_qat(model: nn.Module, group_size: int = 128, recovery_rank: int = 8,
                 include_embeddings: bool = True) -> nn.Module:
     """Replace dense weights with trainable STE ternary modules in-place."""
-    shared: dict[int, nn.Parameter] = {}
+    shared: dict[int, tuple[nn.Parameter, nn.Parameter]] = {}
     candidates = list(model.named_modules())
     for path, module in candidates:
         if not path or isinstance(module, (TernaryLinear, TernaryEmbedding, PackedTernaryLinear,
@@ -51,9 +52,66 @@ def prepare_qat(model: nn.Module, group_size: int = 128, recovery_rank: int = 8,
             continue
         pointer = module.weight.data_ptr()
         if pointer in shared:
-            replacement.weight = shared[pointer]
+            replacement.weight, replacement.log_scale = shared[pointer]
         else:
-            shared[pointer] = replacement.weight
+            shared[pointer] = (replacement.weight, replacement.log_scale)
+        parent, name = _parent_and_name(model, path)
+        setattr(parent, name, replacement)
+    return model
+
+
+def unpack_for_qat(model: nn.Module) -> nn.Module:
+    """Expand a strict packed artifact into FP32 latent weights for task QAT.
+
+    The expanded tensors are optimizer state, not part of the exported model.
+    Repacking after tuning writes only I2_S trits and FP16 group scales.
+    """
+    candidates = list(model.named_modules())
+    for path, module in candidates:
+        if not path or not isinstance(module, (PackedTernaryLinear, PackedTernaryEmbedding)):
+            continue
+        if module.recovery_rank:
+            raise ValueError("full-weight QAT expects a strict artifact without recovery adapters")
+        if isinstance(module, PackedTernaryLinear):
+            qweight = QuantizedWeight(
+                module.packed_weight,
+                module.weight_scale,
+                (module.out_features, module.in_features),
+                module.group_size,
+            )
+            weight = dequantize(qweight, device=module.packed_weight.device, dtype=torch.float32)
+            replacement = TernaryLinear(
+                module.in_features,
+                module.out_features,
+                bias=module.bias is not None,
+                group_size=module.group_size,
+                recovery_rank=0,
+                device=weight.device,
+                dtype=torch.float32,
+            )
+            replacement.weight.data.copy_(weight)
+            replacement.log_scale.data.copy_(module.weight_scale.float().log())
+            if module.bias is not None:
+                replacement.bias.data.copy_(module.bias.float())
+        else:
+            qweight = QuantizedWeight(
+                module.packed_weight,
+                module.weight_scale,
+                (module.num_embeddings, module.embedding_dim),
+                module.group_size,
+            )
+            weight = dequantize(qweight, device=module.packed_weight.device, dtype=torch.float32)
+            replacement = TernaryEmbedding(
+                module.num_embeddings,
+                module.embedding_dim,
+                padding_idx=module.padding_idx,
+                _weight=weight,
+                group_size=module.group_size,
+                recovery_rank=0,
+                device=weight.device,
+                dtype=torch.float32,
+            )
+            replacement.log_scale.data.copy_(module.weight_scale.float().log())
         parent, name = _parent_and_name(model, path)
         setattr(parent, name, replacement)
     return model
@@ -262,6 +320,10 @@ class MinimaModel(nn.Module):
 
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
+
+    def prepare_qat(self):
+        self.model = unpack_for_qat(self.model)
+        return self
 
     def correct(self, *args, **kwargs):
         if not hasattr(self.model, "correct"):

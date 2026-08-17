@@ -1,5 +1,30 @@
 {
   "cap_usd": 100.0,
+  "settled_usd": 25.0,
+  "settled_note": "Conservative reconciliation of $23.27 observed runtime cost, rounded up; not an invoice.",
+  "settled_job_ids": [
+    "6a82d264e55292eada79b306",
+    "6a82d27ccd3824960fcba908",
+    "6a82d323cd3824960fcba91b",
+    "6a82d35ee55292eada79b317",
+    "6a82d41ecd3824960fcba93b",
+    "6a82d4bfcd3824960fcba95d",
+    "6a82d558cd3824960fcba978",
+    "6a82d6a4e55292eada79b352",
+    "6a82d7fdcd3824960fcba9d0",
+    "6a82db3be55292eada79b38e",
+    "6a82db45cd3824960fcbaa40",
+    "6a82db5ce55292eada79b390",
+    "6a82dba1e55292eada79b392",
+    "6a82dd36e55292eada79b39e",
+    "6a82dd89cd3824960fcbaab4",
+    "6a82de54cd3824960fcbaad0",
+    "6a82df21e55292eada79b3b2",
+    "6a82df70cd3824960fcbaafc",
+    "6a82e052cd3824960fcbab1f",
+    "6a82e0becd3824960fcbab29",
+    "6a82e3b9cd3824960fcbab89"
+  ],
   "jobs": [
     {
       "id": "6a82d264e55292eada79b306",

@@ -91,6 +91,34 @@ class MinimaForSequenceClassification(nn.Module):
             "pooling": self.pooling,
         }, indent=2) + "\n")
 
+    def save_full_tuned(self, output_dir: str | Path, tokenizer=None):
+        """Repack full-weight QAT state without retaining latent FP32 weights."""
+        metadata = self.encoder.minima_metadata
+        descriptors = list(metadata["modules"].values())
+        if not descriptors:
+            raise ValueError("encoder metadata contains no packed modules")
+        group_size = descriptors[0]["group_size"]
+        packed = MinimaModel.from_model(
+            self.encoder.model.eval(),
+            base_model=metadata["base_model"],
+            model_kind=metadata["model_kind"],
+            group_size=group_size,
+            recovery_rank=0,
+        )
+        packed.minima_metadata["base_revision"] = metadata.get("base_revision")
+        packed.save_pretrained(output_dir, tokenizer)
+        output = Path(output_dir)
+        save_file({
+            "classifier.weight": self.classifier.weight.detach().cpu().contiguous(),
+            "classifier.bias": self.classifier.bias.detach().cpu().contiguous(),
+        }, str(output / "classifier.safetensors"))
+        (output / "task_config.json").write_text(json.dumps({
+            "task": "sequence_classification",
+            "num_labels": self.num_labels,
+            "pooling": self.pooling,
+            "tuning": "full_ternary_qat",
+        }, indent=2) + "\n")
+
 
 class MinimaForTokenClassification(nn.Module):
     def __init__(self, encoder: MinimaModel, num_labels: int, dropout: float = 0.1):

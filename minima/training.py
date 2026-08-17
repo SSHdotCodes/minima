@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
 
 from .loading import load_lfm_encoder
 from .modeling import MinimaModel, prepare_qat
-from .modules import PackedTernaryEmbedding, TernaryEmbedding
+from .modules import PackedTernaryEmbedding, TernaryEmbedding, TernaryLinear
 from .quantization import fake_quantize_weight
 from .tuning import cast_recovery_parameters
 
@@ -35,7 +35,7 @@ class DistillationConfig:
     learning_rate: float = 5e-5
     warmup_steps: int = 200
     group_size: int = 128
-    recovery_rank: int = 64
+    recovery_rank: int = 0
     teacher_topk: int = 32
     hidden_loss_weight: float = 2.0
     distill_loss_weight: float = 1.0
@@ -44,6 +44,8 @@ class DistillationConfig:
     seed: int = 42
     log_every: int = 10
     train_ternary_weights: bool = False
+    activation_warmup_steps: int = 0
+    max_weight_file_mb: float = 0.0
 
 
 def _mask_tokens(input_ids: torch.Tensor, attention_mask: torch.Tensor, tokenizer,
@@ -76,7 +78,10 @@ def _selected_student_rows(embedding: TernaryEmbedding | PackedTernaryEmbedding,
     if isinstance(embedding, PackedTernaryEmbedding):
         return embedding.selected_rows(ids, torch.float32)
     rows = embedding.weight.index_select(0, ids.reshape(-1)).view(*ids.shape, embedding.embedding_dim)
-    rows = fake_quantize_weight(rows.reshape(-1, embedding.embedding_dim), embedding.group_size).view_as(rows)
+    selected_scale = embedding.log_scale.index_select(0, ids.reshape(-1)).exp()
+    rows = fake_quantize_weight(
+        rows.reshape(-1, embedding.embedding_dim), embedding.group_size, selected_scale,
+    ).view_as(rows)
     if embedding.recovery_rank:
         a = embedding.recovery_a.index_select(0, ids.reshape(-1)).view(*ids.shape, embedding.recovery_rank)
         rows = rows + a @ embedding.recovery_b
@@ -121,6 +126,12 @@ def _learning_rate(step: int, config: DistillationConfig) -> float:
     return config.learning_rate * 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
+def _set_activation_quant(model: torch.nn.Module, enabled: bool):
+    for module in model.modules():
+        if isinstance(module, TernaryLinear):
+            module.activation_quant = enabled
+
+
 def distill(config: DistillationConfig) -> dict:
     from datasets import load_dataset
 
@@ -152,8 +163,18 @@ def distill(config: DistillationConfig) -> dict:
         parameter.requires_grad_(config.train_ternary_weights or "recovery_" in name)
         if parameter.requires_grad and not config.train_ternary_weights:
             parameter.data = parameter.data.float()
-    trainable = [parameter for parameter in student.parameters() if parameter.requires_grad]
-    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, betas=(0.9, 0.95), weight_decay=0.01)
+    trainable_items = [(name, parameter) for name, parameter in student.named_parameters()
+                       if parameter.requires_grad]
+    trainable = [parameter for _, parameter in trainable_items]
+    decay = [parameter for name, parameter in trainable_items
+             if parameter.ndim >= 2 and not name.endswith("log_scale")]
+    no_decay = [parameter for name, parameter in trainable_items
+                if parameter.ndim < 2 or name.endswith("log_scale")]
+    optimizer = torch.optim.AdamW(
+        [{"params": decay, "weight_decay": 0.01}, {"params": no_decay, "weight_decay": 0.0}],
+        lr=config.learning_rate,
+        betas=(0.9, 0.95),
+    )
 
     dataset = load_dataset(config.dataset, config.dataset_config, split=config.split, streaming=True)
     dataset = dataset.shuffle(seed=config.seed, buffer_size=10_000)
@@ -175,8 +196,12 @@ def distill(config: DistillationConfig) -> dict:
     history: list[dict] = []
     optimizer.zero_grad(set_to_none=True)
     student.train()
+    if config.train_ternary_weights and config.activation_warmup_steps:
+        _set_activation_quant(student, False)
 
     for step in range(config.steps):
+        if config.train_ternary_weights and step == config.activation_warmup_steps:
+            _set_activation_quant(student, True)
         totals = {"loss": 0.0, "hidden": 0.0, "mlm": 0.0, "distill": 0.0, "teacher_acc": 0.0}
         for _ in range(config.gradient_accumulation):
             try:
@@ -228,10 +253,17 @@ def distill(config: DistillationConfig) -> dict:
         packed_student.model = student.eval()
         model = packed_student
     model.save_pretrained(output, tokenizer)
+    weight_file_bytes = (output / "model.safetensors").stat().st_size
+    if config.max_weight_file_mb and weight_file_bytes > config.max_weight_file_mb * 1_000_000:
+        raise RuntimeError(
+            f"exported weight file is {weight_file_bytes / 1_000_000:.2f} MB, "
+            f"above the {config.max_weight_file_mb:.2f} MB limit",
+        )
     report = {
         "config": config.__dict__,
         "duration_seconds": time.time() - started,
         "trainable_parameters": sum(parameter.numel() for parameter in trainable),
+        "weight_file_bytes": weight_file_bytes,
         "history": history,
     }
     (output / "training_report.json").write_text(json.dumps(report, indent=2) + "\n")
