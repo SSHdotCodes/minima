@@ -19,7 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 train = ["accelerate>=1.10", "datasets>=3.6", "evaluate>=0.4", "scikit-learn>=1.5"]
-test = ["pytest>=8.3", "ruff>=0.12"]
+test = ["pytest>=8.3", "ruff==0.9.10"]
 
 [project.scripts]
 minima-convert = "minima.cli.convert:main"
