@@ -122,6 +122,20 @@ def _empty_packed(descriptor: dict[str, Any]) -> nn.Module:
                                   recovery_a, recovery_b)
 
 
+def _materialize_derived_buffers(model: nn.Module):
+    """Rebuild nonpersistent RoPE buffers that are absent from safetensors."""
+    for module in model.modules():
+        inv_freq = getattr(module, "inv_freq", None)
+        if isinstance(inv_freq, torch.Tensor) and inv_freq.device.type == "meta":
+            compute = getattr(module, "compute_default_rope_parameters", None)
+            if compute is None:
+                raise RuntimeError(f"cannot materialize meta buffer for {type(module).__name__}")
+            value, scaling = compute(module.config, device="cpu")
+            module.inv_freq = nn.Buffer(value, persistent=False)
+            module.original_inv_freq = nn.Buffer(value.clone(), persistent=False)
+            module.attention_scaling = scaling
+
+
 class MinimaModel(nn.Module):
     """Thin wrapper around an LFM2.5 model whose matrix weights are packed ternary."""
 
@@ -182,6 +196,11 @@ class MinimaModel(nn.Module):
             raise RuntimeError(f"artifact state mismatch: missing={missing}, unexpected={unexpected}")
         if metadata["model_kind"] == "spellchecker":
             patch_tied_vocab_projection(model)
+        _materialize_derived_buffers(model)
+        remaining_meta = [name for name, value in list(model.named_parameters()) + list(model.named_buffers())
+                          if value.device.type == "meta"]
+        if remaining_meta:
+            raise RuntimeError(f"unmaterialized artifact tensors: {remaining_meta}")
         model.to(device)
         if torch.device(device).type == "cpu":
             # The upstream artifact keeps non-matrix tensors in FP16. Promoting

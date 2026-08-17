@@ -16,6 +16,7 @@ from .loading import load_lfm_encoder
 from .modeling import MinimaModel, prepare_qat
 from .modules import PackedTernaryEmbedding, TernaryEmbedding
 from .quantization import fake_quantize_weight
+from .tuning import cast_recovery_parameters
 
 
 @dataclass
@@ -31,7 +32,7 @@ class DistillationConfig:
     batch_size: int = 4
     gradient_accumulation: int = 8
     steps: int = 4000
-    learning_rate: float = 2e-4
+    learning_rate: float = 5e-5
     warmup_steps: int = 200
     group_size: int = 128
     recovery_rank: int = 64
@@ -149,6 +150,8 @@ def distill(config: DistillationConfig) -> dict:
         student = packed_student.model.to(device)
     for name, parameter in student.named_parameters():
         parameter.requires_grad_(config.train_ternary_weights or "recovery_" in name)
+        if parameter.requires_grad and not config.train_ternary_weights:
+            parameter.data = parameter.data.float()
     trainable = [parameter for parameter in student.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, betas=(0.9, 0.95), weight_decay=0.01)
 
@@ -196,6 +199,8 @@ def distill(config: DistillationConfig) -> dict:
                 )
                 loss = (config.hidden_loss_weight * hidden_loss + config.mlm_loss_weight * mlm_loss +
                         config.distill_loss_weight * distill_loss) / config.gradient_accumulation
+            if not torch.isfinite(loss):
+                raise FloatingPointError(f"non-finite distillation loss at step {step + 1}")
             loss.backward()
             totals["loss"] += loss.item()
             totals["hidden"] += hidden_loss.item() / config.gradient_accumulation
@@ -219,6 +224,7 @@ def distill(config: DistillationConfig) -> dict:
         model = MinimaModel.from_model(student.eval(), base_model=config.model, model_kind="encoder",
                                        group_size=config.group_size, recovery_rank=config.recovery_rank)
     else:
+        cast_recovery_parameters(student)
         packed_student.model = student.eval()
         model = packed_student
     model.save_pretrained(output, tokenizer)

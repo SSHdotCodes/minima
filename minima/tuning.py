@@ -11,18 +11,26 @@ from transformers.modeling_outputs import SequenceClassifierOutput, TokenClassif
 from .modeling import MinimaModel
 
 
-def enable_recovery_training(model: nn.Module) -> int:
+def enable_recovery_training(model: nn.Module, fp32_master: bool = True) -> int:
     """Freeze the packed backbone and enable only recovery adapters."""
     for parameter in model.parameters():
         parameter.requires_grad_(False)
     count = 0
     for name, parameter in model.named_parameters():
         if name.endswith("recovery_a") or name.endswith("recovery_b"):
+            if fp32_master:
+                parameter.data = parameter.data.float()
             parameter.requires_grad_(True)
             count += parameter.numel()
     if not count:
         raise ValueError("this artifact has no recovery adapters; use the quality profile or run QAT")
     return count
+
+
+def cast_recovery_parameters(model: nn.Module, dtype: torch.dtype = torch.float16):
+    for name, parameter in model.named_parameters():
+        if name.endswith("recovery_a") or name.endswith("recovery_b"):
+            parameter.data = parameter.data.to(dtype)
 
 
 class MinimaForSequenceClassification(nn.Module):
@@ -83,4 +91,3 @@ class MinimaForTokenClassification(nn.Module):
             logits.view(-1, self.num_labels), labels.view(-1), ignore_index=-100,
         )
         return TokenClassifierOutput(loss=loss, logits=logits)
-

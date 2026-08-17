@@ -26,6 +26,7 @@ minima-convert = "minima.cli.convert:main"
 minima-benchmark = "minima.cli.benchmark:main"
 minima-train = "minima.cli.train:main"
 minima-tune = "minima.cli.tune:main"
+minima-train-spellcheck = "minima.cli.train_spellcheck:main"
 
 [tool.setuptools.packages.find]
 include = ["minima*"]
