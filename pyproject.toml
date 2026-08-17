@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77", "wheel", "torch>=2.6"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "minima-lfm"
+version = "0.1.0"
+description = "Fast W1.58A8 ternary inference and tuning for LFM2.5 encoders"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "SSHDotCodes"}]
+dependencies = [
+  "huggingface-hub>=0.34",
+  "safetensors>=0.5",
+  "torch>=2.6",
+  "transformers>=4.56",
+]
+
+[project.optional-dependencies]
+train = ["accelerate>=1.10", "datasets>=3.6", "evaluate>=0.4", "scikit-learn>=1.5"]
+test = ["pytest>=8.3", "ruff>=0.12"]
+
+[project.scripts]
+minima-convert = "minima.cli.convert:main"
+minima-benchmark = "minima.cli.benchmark:main"
+minima-train = "minima.cli.train:main"
+
+[tool.setuptools.packages.find]
+include = ["minima*"]
+
+[tool.setuptools.package-data]
+minima = ["csrc/*.cpp", "csrc/*.h"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+

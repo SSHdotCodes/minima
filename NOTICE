@@ -1,0 +1,9 @@
+Minima includes an independently adapted I2_S packing and CPU dot-product
+implementation inspired by Microsoft BitNet (MIT License):
+https://github.com/microsoft/BitNet
+
+Model artifacts derived from LiquidAI/LFM2.5-Encoder-350M remain subject to
+the LFM Open License v1.0. See MODEL_LICENSE for its full terms. In particular,
+commercial use by a legal entity with annual revenue of USD $10 million or more
+is not licensed by that agreement.
+

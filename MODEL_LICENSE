@@ -1,0 +1,9 @@
+LFM Open License v1.0
+
+The full, authoritative license accompanies the upstream model at:
+https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M/blob/main/LICENSE
+
+Redistributed model repositories produced by Minima MUST include the complete
+upstream LICENSE file. This source repository does not relicense LiquidAI model
+weights or its model-specific source code.
+
