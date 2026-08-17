@@ -162,6 +162,7 @@ class MinimaModel(nn.Module):
             "physical_weight_bits": 2,
             "activation_bits": 8,
             "base_model": base_model,
+            "base_revision": getattr(getattr(model, "config", None), "_commit_hash", None),
             "model_kind": model_kind,
             "max_context": 8192,
             "modules": descriptors,
@@ -179,7 +180,12 @@ class MinimaModel(nn.Module):
             raise ValueError(f"unsupported Minima format version {metadata['format_version']}")
 
         base_model = metadata["base_model"]
-        config = AutoConfig.from_pretrained(base_model, trust_remote_code=True, token=token)
+        config = AutoConfig.from_pretrained(
+            base_model,
+            revision=metadata.get("base_revision"),
+            trust_remote_code=True,
+            token=token,
+        )
         with torch.device("meta"):
             if metadata["model_kind"] == "masked_lm":
                 model = AutoModelForMaskedLM.from_config(config, trust_remote_code=True)
