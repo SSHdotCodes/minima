@@ -60,7 +60,7 @@ def triton_i2s_linear(x: torch.Tensor, packed: torch.Tensor, scale: torch.Tensor
     # tl.dot feed tensor cores with substantially larger tiles. Smaller M
     # tiles avoid wasting work for short, single-sequence encoder calls.
     block_m = 32 if m < 256 else 64
-    block_n, block_k = 64, group_size
+    block_n, block_k = 64, 128
     grid = (triton.cdiv(m, block_m), triton.cdiv(n, block_n))
     _i2s_gemm[grid](
         x, packed, scale, out, m, n, k, groups, quarter, group_size,
