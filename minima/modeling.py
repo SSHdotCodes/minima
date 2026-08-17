@@ -230,7 +230,7 @@ class MinimaModel(nn.Module):
         readme = output / "README.md"
         if not readme.exists():
             readme.write_text(
-                "---\nlicense: other\nlicense_name: LFM Open License v1.0\n"
+                "---\nlicense: other\nlicense_name: lfm-open-license-v1.0\n"
                 "license_link: https://huggingface.co/LiquidAI/LFM2.5-Encoder-350M/blob/main/LICENSE\n"
                 "library_name: minima-lfm\n"
                 f"base_model: {self.minima_metadata['base_model']}\n---\n\n"
