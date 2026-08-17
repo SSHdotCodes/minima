@@ -64,7 +64,8 @@ def score(metric, logits, labels):
     return float((predictions == labels).mean())
 
 
-def train_one(kind, model_id, base_id, task, tokenizer, max_steps, seed, output_root):
+def train_one(kind, model_id, base_id, task, tokenizer, max_steps, seed, output_root,
+              learning_rate_override=None):
     text_a, text_b, validation_split, num_labels, metric = TASKS[task]
     raw = load_dataset("nyu-mll/glue", task)
 
@@ -80,13 +81,13 @@ def train_one(kind, model_id, base_id, task, tokenizer, max_steps, seed, output_
         encoder = load_lfm_encoder(base_id, torch_dtype=torch.float32,
                                    attn_implementation="sdpa").cuda()
         config = encoder.config
-        learning_rate = 3e-5
+        learning_rate = learning_rate_override or 3e-5
     else:
         minima = MinimaModel.from_pretrained(model_id, device="cuda")
         enable_recovery_training(minima)
         encoder = minima
         config = minima.config
-        learning_rate = 1e-4
+        learning_rate = learning_rate_override or 1e-4
     model = EncoderClassifier(encoder, config, num_labels).cuda()
     args = TrainingArguments(
         output_dir=str(output_root / f"{kind}-{task}"),
@@ -121,6 +122,9 @@ def main():
     parser.add_argument("--model", default="ProCreations/minima")
     parser.add_argument("--base", default="LiquidAI/LFM2.5-Encoder-350M")
     parser.add_argument("--steps", type=int, default=800)
+    parser.add_argument("--minima-steps", type=int, default=0)
+    parser.add_argument("--minima-learning-rate", type=float, default=1e-4)
+    parser.add_argument("--tasks", default=",".join(TASKS))
     parser.add_argument("--seed", type=int, default=45)
     parser.add_argument("--output", default="/tmp/minima-quality")
     parser.add_argument("--results-repo", default="ProCreations/minima-results")
@@ -128,10 +132,26 @@ def main():
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     tokenizer = AutoTokenizer.from_pretrained(args.base, trust_remote_code=True)
-    results = {"model": args.model, "base": args.base, "steps": args.steps, "seed": args.seed, "tasks": {}}
-    for task in TASKS:
+    selected_tasks = [task.strip() for task in args.tasks.split(",")]
+    unknown = set(selected_tasks) - set(TASKS)
+    if unknown:
+        raise ValueError(f"unknown tasks: {sorted(unknown)}")
+    minima_steps = args.minima_steps or args.steps
+    results = {
+        "model": args.model,
+        "base": args.base,
+        "base_steps": args.steps,
+        "minima_steps": minima_steps,
+        "minima_learning_rate": args.minima_learning_rate,
+        "seed": args.seed,
+        "tasks": {},
+    }
+    for task in selected_tasks:
         base_score = train_one("base", args.model, args.base, task, tokenizer, args.steps, args.seed, output)
-        minima_score = train_one("minima", args.model, args.base, task, tokenizer, args.steps, args.seed, output)
+        minima_score = train_one(
+            "minima", args.model, args.base, task, tokenizer, minima_steps, args.seed, output,
+            args.minima_learning_rate,
+        )
         ratio = min(1.0, minima_score / base_score) if base_score > 0 else 0.0
         results["tasks"][task] = {"base": base_score, "minima": minima_score, "capped_ratio": ratio}
         print(json.dumps({"task": task, **results["tasks"][task]}), flush=True)
