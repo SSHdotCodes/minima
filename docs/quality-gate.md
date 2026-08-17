@@ -25,9 +25,10 @@ upstream-table reproduction. Representation cosine, masked-token agreement, and
 
 ## Spellchecker
 
-The spellchecker is compared with LiquidAI's FP16 teacher under the same iterative
-decode settings. The target is at least 97% of the teacher's MASTER composite
-(teacher model card: 64.24, threshold: 62.31), plus exact-output examples and a
-clean-text false-positive check. If public benchmark data cannot legally be
-redistributed, the evaluator downloads it from its canonical source at run time.
-
+The packed spellchecker is compared with LiquidAI's FP16 tagger under the same
+iterative decode settings with its optional dense reranker disabled for both
+models. The report includes held-out tag and detection agreement, exact correction
+agreement, example outputs, and a clean-text false-positive check. The reranker is
+excluded because it contains a separate 1.42 GB FP32 encoder and would invalidate
+the packed CPU memory measurement. Public ERRANT scores, when reported, are kept
+separate from teacher-agreement diagnostics.
