@@ -1,7 +1,7 @@
 {
   "cap_usd": 100.0,
-  "settled_usd": 25.0,
-  "settled_note": "Conservative reconciliation of $23.27 observed runtime cost, rounded up; not an invoice.",
+  "settled_usd": 26.0,
+  "settled_note": "Conservative reconciliation of observed runtime cost, rounded up; not an invoice.",
   "settled_job_ids": [
     "6a82d264e55292eada79b306",
     "6a82d27ccd3824960fcba908",
@@ -23,7 +23,8 @@
     "6a82df70cd3824960fcbaafc",
     "6a82e052cd3824960fcbab1f",
     "6a82e0becd3824960fcbab29",
-    "6a82e3b9cd3824960fcbab89"
+    "6a82e3b9cd3824960fcbab89",
+    "6a833ccce55292eada79b7b1"
   ],
   "jobs": [
     {
@@ -223,6 +224,15 @@
       "worst_case_usd": 5.0,
       "created_at": "2026-08-17T16:54:36.338471+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a833ccce55292eada79b7b1"
+    },
+    {
+      "id": "6a833e87cd3824960fcbb9cc",
+      "name": "strict-qat-g128-4500",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T17:01:59.371334+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a833e87cd3824960fcbb9cc"
     }
   ]
 }
