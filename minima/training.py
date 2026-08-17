@@ -39,6 +39,8 @@ class DistillationConfig:
     recovery_rank: int = 0
     teacher_topk: int = 32
     hidden_loss_weight: float = 2.0
+    layerwise_hidden_loss_weight: float = 0.0
+    pooled_loss_weight: float = 0.0
     distill_loss_weight: float = 1.0
     mlm_loss_weight: float = 1.0
     temperature: float = 2.0
@@ -126,6 +128,22 @@ def _learning_rate(step: int, config: DistillationConfig) -> float:
         return config.learning_rate * (step + 1) / max(1, config.warmup_steps)
     progress = (step - config.warmup_steps) / max(1, config.steps - config.warmup_steps)
     return config.learning_rate * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
+def _masked_cosine_loss(student: torch.Tensor, teacher: torch.Tensor,
+                        attention_mask: torch.Tensor) -> torch.Tensor:
+    loss = 1.0 - F.cosine_similarity(student.float(), teacher.float(), dim=-1)
+    mask = attention_mask.to(loss.dtype)
+    return (loss * mask).sum() / mask.sum().clamp_min(1)
+
+
+def _pooled_cosine_loss(student: torch.Tensor, teacher: torch.Tensor,
+                        attention_mask: torch.Tensor) -> torch.Tensor:
+    mask = attention_mask.unsqueeze(-1).float()
+    denominator = mask.sum(dim=1).clamp_min(1)
+    student_pooled = (student.float() * mask).sum(dim=1) / denominator
+    teacher_pooled = (teacher.float() * mask).sum(dim=1) / denominator
+    return (1.0 - F.cosine_similarity(student_pooled, teacher_pooled, dim=-1)).mean()
 
 
 def _set_activation_quant(model: torch.nn.Module, enabled: bool):
@@ -224,7 +242,15 @@ def distill(config: DistillationConfig) -> dict:
             _set_weight_quant_strength(student, strength)
         if config.train_ternary_weights and step == config.activation_warmup_steps:
             _set_activation_quant(student, True)
-        totals = {"loss": 0.0, "hidden": 0.0, "mlm": 0.0, "distill": 0.0, "teacher_acc": 0.0}
+        totals = {
+            "loss": 0.0,
+            "hidden": 0.0,
+            "layerwise_hidden": 0.0,
+            "pooled": 0.0,
+            "mlm": 0.0,
+            "distill": 0.0,
+            "teacher_acc": 0.0,
+        }
         for _ in range(config.gradient_accumulation):
             try:
                 input_ids, attention_mask = next(iterator)
@@ -234,23 +260,57 @@ def distill(config: DistillationConfig) -> dict:
             input_ids = input_ids.to(device, non_blocking=True)
             attention_mask = attention_mask.to(device, non_blocking=True)
             corrupted, labels = _mask_tokens(input_ids, attention_mask, tokenizer)
+            return_hidden_states = config.layerwise_hidden_loss_weight > 0
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-                teacher_hidden = teacher(input_ids=corrupted, attention_mask=attention_mask).last_hidden_state
+                teacher_output = teacher(
+                    input_ids=corrupted,
+                    attention_mask=attention_mask,
+                    output_hidden_states=return_hidden_states,
+                )
+                teacher_hidden = teacher_output.last_hidden_state
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                student_hidden = student(input_ids=corrupted, attention_mask=attention_mask).last_hidden_state
-                hidden_loss = 1.0 - F.cosine_similarity(student_hidden.float(), teacher_hidden.float(), dim=-1)
-                hidden_loss = (hidden_loss * attention_mask).sum() / attention_mask.sum()
+                student_output = student(
+                    input_ids=corrupted,
+                    attention_mask=attention_mask,
+                    output_hidden_states=return_hidden_states,
+                )
+                student_hidden = student_output.last_hidden_state
+                hidden_loss = _masked_cosine_loss(student_hidden, teacher_hidden, attention_mask)
+                pooled_loss = _pooled_cosine_loss(student_hidden, teacher_hidden, attention_mask)
+                if return_hidden_states:
+                    teacher_states = teacher_output.hidden_states
+                    student_states = student_output.hidden_states
+                    if len(student_states) != len(teacher_states):
+                        raise RuntimeError(
+                            f"hidden-state count mismatch: student={len(student_states)}, "
+                            f"teacher={len(teacher_states)}",
+                        )
+                    # The final state already has its own stronger objective.
+                    internal_pairs = list(zip(student_states[:-1], teacher_states[:-1]))
+                    layerwise_hidden_loss = torch.stack([
+                        _masked_cosine_loss(student_state, teacher_state, attention_mask)
+                        for student_state, teacher_state in internal_pairs
+                    ]).mean()
+                else:
+                    layerwise_hidden_loss = hidden_loss.new_zeros(())
                 mlm_loss, distill_loss, teacher_acc = _candidate_loss(
                     student_hidden, teacher_hidden, labels, student_embedding, teacher_weight,
                     config.teacher_topk, config.temperature,
                 )
-                loss = (config.hidden_loss_weight * hidden_loss + config.mlm_loss_weight * mlm_loss +
-                        config.distill_loss_weight * distill_loss) / config.gradient_accumulation
+                loss = (
+                    config.hidden_loss_weight * hidden_loss
+                    + config.layerwise_hidden_loss_weight * layerwise_hidden_loss
+                    + config.pooled_loss_weight * pooled_loss
+                    + config.mlm_loss_weight * mlm_loss
+                    + config.distill_loss_weight * distill_loss
+                ) / config.gradient_accumulation
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"non-finite distillation loss at step {step + 1}")
             loss.backward()
             totals["loss"] += loss.item()
             totals["hidden"] += hidden_loss.item() / config.gradient_accumulation
+            totals["layerwise_hidden"] += layerwise_hidden_loss.item() / config.gradient_accumulation
+            totals["pooled"] += pooled_loss.item() / config.gradient_accumulation
             totals["mlm"] += mlm_loss.item() / config.gradient_accumulation
             totals["distill"] += distill_loss.item() / config.gradient_accumulation
             totals["teacher_acc"] += teacher_acc / config.gradient_accumulation
