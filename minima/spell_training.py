@@ -212,7 +212,7 @@ def distill_spellchecker(config: SpellDistillationConfig) -> dict:
         "That 's a fair point , let 's discuss it tomorrow .",
     ]
     evaluation_texts = examples + held_out
-    with torch.inference_mode():
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
         # The upstream optional reranker contains a second 1.42 GB dense
         # encoder. Tagger-only evaluation measures the packed model itself and
         # preserves the memory contract of the Minima demo.
