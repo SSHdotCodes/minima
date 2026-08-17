@@ -1,7 +1,7 @@
 {
   "cap_usd": 100.0,
-  "settled_usd": 54.3,
-  "settled_note": "Conservative reconciliation through the group-32 geometry task calibration, rounded up from observed runtimes; not an invoice.",
+  "settled_usd": 56.1,
+  "settled_note": "Conservative reconciliation through the group-32 long adaptation and SST-2 task-distillation probes, rounded up from observed runtimes; not an invoice.",
   "settled_job_ids": [
     "6a82d264e55292eada79b306",
     "6a82d27ccd3824960fcba908",
@@ -41,7 +41,9 @@
     "6a836c2ee55292eada79b961",
     "6a83755dcd3824960fcbc1f3",
     "6a8376aecd3824960fcbc244",
-    "6a837911cd3824960fcbc28e"
+    "6a837911cd3824960fcbc28e",
+    "6a837a0ecd3824960fcbc2ae",
+    "6a837c49e55292eada79ba05"
   ],
   "jobs": [
     {
@@ -412,6 +414,15 @@
       "worst_case_usd": 1.25,
       "created_at": "2026-08-17T21:25:29.934544+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a837c49e55292eada79ba05"
+    },
+    {
+      "id": "6a837f5ecd3824960fcbc36a",
+      "name": "strict-g16-rowwise-progressive-qat",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T21:38:38.448361+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a837f5ecd3824960fcbc36a"
     }
   ]
 }
