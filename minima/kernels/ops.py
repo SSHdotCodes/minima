@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import warnings
 from functools import lru_cache
 from pathlib import Path
@@ -21,7 +22,12 @@ def _cpu_extension():
         flags = ["-O3", "-DNDEBUG"]
         if os.name != "nt":
             flags += ["-ffast-math"]
-        return load(name="minima_ternary_cpu_v2", sources=[str(source)], extra_cflags=flags, verbose=False)
+        machine = platform.machine().lower()
+        if machine in {"x86_64", "amd64"}:
+            flags += ["-mavx2", "-mfma"]
+        elif machine in {"aarch64", "arm64"} and platform.system() != "Darwin":
+            flags += ["-mcpu=native"]
+        return load(name="minima_ternary_cpu_v3", sources=[str(source)], extra_cflags=flags, verbose=False)
     except Exception as exc:  # pragma: no cover - compiler availability is environment-specific
         warnings.warn(f"Minima CPU extension unavailable; using reference path: {exc}", RuntimeWarning)
         return None
