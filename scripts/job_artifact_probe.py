@@ -90,10 +90,11 @@ def main():
     report_path = Path(args.model) / "probe_report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)
-    HfApi().upload_folder(repo_id=args.repo, folder_path=args.model, repo_type="model",
-                          commit_message="Upload distilled Minima model and probe report")
+    api = HfApi()
+    api.create_repo(args.repo, repo_type="model", exist_ok=True)
+    api.upload_folder(repo_id=args.repo, folder_path=args.model, repo_type="model",
+                      commit_message="Upload distilled Minima model and probe report")
 
 
 if __name__ == "__main__":
     main()
-
