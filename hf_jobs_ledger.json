@@ -63,6 +63,15 @@
       "worst_case_usd": 5.0,
       "created_at": "2026-08-17T09:33:12.502221+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a82d558cd3824960fcba978"
+    },
+    {
+      "id": "6a82d6a4e55292eada79b352",
+      "name": "distill-g32-r128-500-r2",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T09:38:44.076807+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a82d6a4e55292eada79b352"
     }
   ]
 }
