@@ -34,9 +34,11 @@ def _cpu_extension():
 
 
 def kernel_status() -> dict[str, bool]:
+    dynamic_int8 = os.environ.get("MINIMA_CPU_BACKEND", "dynamic_int8").lower() != "i2s"
     return {
-        "cpu_extension": _cpu_extension() is not None,
+        "cpu_extension": False if dynamic_int8 else _cpu_extension() is not None,
         "cuda_triton": bool(torch.cuda.is_available() and _has_triton()),
+        "cpu_dynamic_int8": dynamic_int8,
     }
 
 

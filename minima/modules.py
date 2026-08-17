@@ -16,6 +16,26 @@ from .quantization import (
 )
 
 
+def _dynamic_int8_linear(weight: torch.Tensor, bias: torch.Tensor | None) -> nn.Module:
+    """Pack an effective FP32 matrix for PyTorch's optimized dynamic INT8 GEMM."""
+    if torch.backends.quantized.engine == "none":
+        for engine in ("x86", "fbgemm", "qnnpack"):
+            if engine in torch.backends.quantized.supported_engines:
+                torch.backends.quantized.engine = engine
+                break
+    if torch.backends.quantized.engine == "none":
+        raise RuntimeError("this PyTorch build has no dynamic quantized CPU engine")
+    weight = weight.float().contiguous()
+    scales = weight.abs().amax(dim=1).clamp_min(1.0e-8) / 127.0
+    zeros = torch.zeros(weight.shape[0], dtype=torch.long)
+    qweight = torch.quantize_per_channel(weight, scales, zeros, axis=0, dtype=torch.qint8)
+    linear = torch.ao.nn.quantized.dynamic.Linear(
+        weight.shape[1], weight.shape[0], bias_=bias is not None,
+    )
+    linear.set_weight_bias(qweight, None if bias is None else bias.float())
+    return linear.eval()
+
+
 def _factor_residual(weight: torch.Tensor, qweight: QuantizedWeight,
                      rank: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Randomized low-rank factors for W - dequant(W), computed where W lives."""
@@ -130,6 +150,7 @@ class PackedTernaryLinear(nn.Module):
         self.register_parameter("recovery_a", nn.Parameter(recovery_a.contiguous()) if recovery_a is not None else None)
         self.register_parameter("recovery_b", nn.Parameter(recovery_b.contiguous()) if recovery_b is not None else None)
         self.register_buffer("_training_weight", None, persistent=False)
+        object.__setattr__(self, "_cpu_int8", None)
 
     @property
     def recovery_rank(self) -> int:
@@ -151,6 +172,7 @@ class PackedTernaryLinear(nn.Module):
                    recovery_a, recovery_b)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        fused_recovery = False
         if self.training and torch.is_grad_enabled():
             if (self._training_weight is None or self._training_weight.device != x.device or
                     self._training_weight.dtype != x.dtype):
@@ -159,12 +181,34 @@ class PackedTernaryLinear(nn.Module):
                 self._training_weight = dequantize(qweight, device=x.device, dtype=x.dtype)
             qx = fake_quantize_activation(x, self.group_size)
             output = F.linear(qx, self._training_weight, None if self.bias is None else self.bias.to(x.dtype))
+        elif x.device.type == "cpu" and x.dtype == torch.float32 and self._cpu_int8 is not None:
+            output = self._cpu_int8(x)
+            fused_recovery = True
         else:
             output = ternary_linear(x, self.packed_weight, self.weight_scale, self.in_features,
                                     self.group_size, self.bias)
-        if self.recovery_a is not None:
+        if self.recovery_a is not None and not fused_recovery:
             output = output + F.linear(F.linear(x, self.recovery_b.to(x.dtype)), self.recovery_a.to(x.dtype))
         return output
+
+    def optimize_cpu(self, *, release_source: bool = True):
+        """Fuse ternary + recovery weights into a fast per-channel INT8 CPU GEMM."""
+        if self._cpu_int8 is None:
+            if not self.packed_weight.numel():
+                raise RuntimeError("packed source was released before CPU optimization")
+            qweight = QuantizedWeight(self.packed_weight, self.weight_scale,
+                                      (self.out_features, self.in_features), self.group_size)
+            effective = dequantize(qweight, device="cpu", dtype=torch.float32)
+            if self.recovery_a is not None:
+                effective.addmm_(self.recovery_a.float(), self.recovery_b.float())
+            object.__setattr__(self, "_cpu_int8", _dynamic_int8_linear(effective, self.bias))
+        if release_source:
+            self.packed_weight = torch.empty(0, dtype=torch.uint8)
+            self.weight_scale = torch.empty(0, dtype=torch.float32)
+            self.bias = None
+            self.recovery_a = None
+            self.recovery_b = None
+        return self
 
 
 class PackedTernaryEmbedding(nn.Module):
@@ -181,6 +225,8 @@ class PackedTernaryEmbedding(nn.Module):
         self.register_parameter("recovery_a", nn.Parameter(recovery_a.contiguous()) if recovery_a is not None else None)
         self.register_parameter("recovery_b", nn.Parameter(recovery_b.contiguous()) if recovery_b is not None else None)
         self.register_buffer("_training_weight", None, persistent=False)
+        object.__setattr__(self, "_cpu_int8_project", None)
+        self._cpu_fast_project = False
 
     @property
     def recovery_rank(self) -> int:
@@ -219,6 +265,7 @@ class PackedTernaryEmbedding(nn.Module):
         return self.selected_rows(input_ids, dtype)
 
     def project(self, hidden: torch.Tensor) -> torch.Tensor:
+        fused_recovery = False
         if self.training and torch.is_grad_enabled():
             if (self._training_weight is None or self._training_weight.device != hidden.device or
                     self._training_weight.dtype != hidden.dtype):
@@ -226,10 +273,20 @@ class PackedTernaryEmbedding(nn.Module):
                                           (self.num_embeddings, self.embedding_dim), self.group_size)
                 self._training_weight = dequantize(qweight, device=hidden.device, dtype=hidden.dtype)
             output = F.linear(fake_quantize_activation(hidden, self.group_size), self._training_weight)
+        elif hidden.device.type == "cpu" and hidden.dtype == torch.float32 and self._cpu_fast_project:
+            if self._cpu_int8_project is None:
+                qweight = QuantizedWeight(self.packed_weight, self.weight_scale,
+                                          (self.num_embeddings, self.embedding_dim), self.group_size)
+                effective = dequantize(qweight, device="cpu", dtype=torch.float32)
+                if self.recovery_a is not None:
+                    effective.addmm_(self.recovery_a.float(), self.recovery_b.float())
+                object.__setattr__(self, "_cpu_int8_project", _dynamic_int8_linear(effective, None))
+            output = self._cpu_int8_project(hidden)
+            fused_recovery = True
         else:
             output = ternary_linear(hidden, self.packed_weight, self.weight_scale, self.embedding_dim,
                                     self.group_size)
-        if self.recovery_a is not None:
+        if self.recovery_a is not None and not fused_recovery:
             output = output + F.linear(F.linear(hidden, self.recovery_b.to(hidden.dtype)),
                                        self.recovery_a.to(hidden.dtype))
         return output

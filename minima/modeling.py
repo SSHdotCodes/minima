@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -213,6 +214,12 @@ class MinimaModel(nn.Module):
             # the small residual set avoids mixed-dtype CPU conv/linear errors;
             # packed uint8 weights are unchanged.
             model.float()
+            if os.environ.get("MINIMA_CPU_BACKEND", "dynamic_int8").lower() != "i2s":
+                for module in model.modules():
+                    if isinstance(module, PackedTernaryLinear):
+                        module.optimize_cpu(release_source=True)
+                    elif isinstance(module, PackedTernaryEmbedding):
+                        module._cpu_fast_project = True
         model.eval()
         return cls(model, metadata)
 

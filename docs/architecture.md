@@ -15,10 +15,14 @@ changes the matrix representation and execution path:
 5. RMSNorm values, biases, and the 3-tap depthwise convolution remain FP16. They
    represent a tiny fraction of parameters and are not matrix-multiply weights.
 
-The CPU extension fuses activation quantization, I2_S unpacking, and dot products.
-Its AVX2 path uses unsigned ternary codes and `maddubs`; its ARM path uses NEON
-dot-product instructions. The CUDA path fuses unpacking and matrix multiplication
-in Triton so a full dequantized weight tensor is never materialized.
+The default CPU inference path fuses the ternary matrix and its recovery adapter
+once, packs the effective matrix to per-channel INT8, releases the projection's
+source tensors, and dispatches through PyTorch's oneDNN/FBGEMM dynamic GEMM. This
+is the throughput profile. The strict I2_S extension instead fuses activation
+quantization, 2-bit unpacking, and dot products directly; its AVX2 path uses
+unsigned ternary codes and `maddubs`, while its ARM path uses NEON dot-product
+instructions. The CUDA path fuses unpacking and matrix multiplication in Triton
+so a full dequantized weight tensor is never materialized.
 
 ## Storage profiles
 

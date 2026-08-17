@@ -34,6 +34,22 @@ def test_packed_recovery_adapter_has_end_to_end_gradients():
     assert packed.recovery_b.grad is not None
 
 
+def test_dynamic_int8_cpu_fuses_ternary_and_recovery():
+    if not [engine for engine in torch.backends.quantized.supported_engines if engine != "none"]:
+        return
+    torch.manual_seed(32)
+    packed = PackedTernaryLinear.from_float(
+        nn.Linear(128, 19), group_size=32, recovery_rank=4,
+    ).eval()
+    x = torch.randn(7, 128)
+    expected = packed(x)
+    packed.optimize_cpu(release_source=True)
+    actual = packed(x)
+    relative_mae = (actual - expected).abs().mean() / expected.abs().mean().clamp_min(1.0e-6)
+    assert relative_mae < 0.03
+    assert packed.packed_weight.numel() == 0
+
+
 def test_packed_embedding_matches_dequantized_rows():
     torch.manual_seed(4)
     embedding = nn.Embedding(31, 128, padding_idx=0)

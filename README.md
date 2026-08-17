@@ -20,7 +20,8 @@ backbone. The strict no-adapter profile remains available as an ablation.
 - Logical matrix weights: `{-1, 0, +1}` (`log2(3) = 1.585` bits)
 - Runtime storage: SIMD-friendly I2_S (four trits per byte)
 - Activations: dynamic per-token/group int8
-- CPU: fused AVX2 and ARM NEON dot-product extension
+- CPU: one-time ternary+recovery fusion into oneDNN/FBGEMM dynamic INT8 GEMMs;
+  fused AVX2 and ARM NEON I2_S kernels remain available as the strict backend
 - CUDA: fused Triton unpack/matmul kernel
 - Context: unchanged 8,192 tokens
 - Tuning: STE QAT or lightweight recovery-adapter tuning
@@ -42,8 +43,13 @@ model = MinimaModel.from_pretrained("ProCreations/minima", device="cpu")
 outputs = model(input_ids=input_ids, attention_mask=attention_mask)
 ```
 
-The first CPU use compiles a small PyTorch C++ extension and caches it. Set
-`MINIMA_DISABLE_EXT=1` to force the portable reference implementation.
+CPU inference defaults to the fast dynamic-INT8 backend. It expands the ternary
+artifact once, fuses each recovery adapter into its matrix, packs the result with
+per-channel INT8 scales, and releases the source projection tensors. This keeps
+runtime memory far below FP32 while using the platform's optimized GEMM library.
+Set `MINIMA_CPU_BACKEND=i2s` for direct 2-bit AVX2/NEON execution; its first use
+compiles and caches the small C++ extension. Set `MINIMA_DISABLE_EXT=1` to force
+the portable reference implementation.
 
 ## Convert, distill, and benchmark
 
