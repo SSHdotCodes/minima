@@ -95,7 +95,7 @@ def train_one(kind, model_id, base_id, task, tokenizer, max_steps, seed, output_
         per_device_train_batch_size=16,
         per_device_eval_batch_size=32,
         gradient_accumulation_steps=1,
-        warmup_ratio=0.1,
+        warmup_steps=max(1, max_steps // 10),
         weight_decay=0.01,
         bf16=True,
         eval_strategy="no",
@@ -151,4 +151,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
