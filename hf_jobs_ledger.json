@@ -214,6 +214,15 @@
       "worst_case_usd": 5.0,
       "created_at": "2026-08-17T10:34:33.263712+00:00",
       "url": "https://huggingface.co/jobs/ProCreations/6a82e3b9cd3824960fcbab89"
+    },
+    {
+      "id": "6a833ccce55292eada79b7b1",
+      "name": "strict-qat-g128-5k",
+      "flavor": "h200",
+      "timeout": "1h",
+      "worst_case_usd": 5.0,
+      "created_at": "2026-08-17T16:54:36.338471+00:00",
+      "url": "https://huggingface.co/jobs/ProCreations/6a833ccce55292eada79b7b1"
     }
   ]
 }
