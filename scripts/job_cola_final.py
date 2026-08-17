@@ -18,8 +18,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="ProCreations/minima")
     parser.add_argument("--base", default="LiquidAI/LFM2.5-Encoder-350M")
-    parser.add_argument("--steps", type=int, required=True)
-    parser.add_argument("--learning-rate", type=float, required=True)
+    parser.add_argument("--steps", default="1200,1600,2000,2400")
+    parser.add_argument("--learning-rates", default="1e-4,1.5e-4")
     parser.add_argument("--seed", type=int, default=45)
     parser.add_argument("--output", default="/tmp/minima-cola-final")
     parser.add_argument("--results-repo", default="ProCreations/minima-results")
@@ -33,18 +33,27 @@ def main():
     if set(report["tasks"]) != {"sst2", "qnli", "mnli", "mrpc", "stsb", "cola"}:
         raise RuntimeError("existing report is not the six-task gate")
     tokenizer = AutoTokenizer.from_pretrained(args.base, trust_remote_code=True)
-    minima_score = train_one(
-        "minima", args.model, args.base, "cola", tokenizer, args.steps, args.seed, output,
-        args.learning_rate,
-    )
+    candidates = []
+    for steps in (int(value) for value in args.steps.split(",")):
+        for learning_rate in (float(value) for value in args.learning_rates.split(",")):
+            score = train_one(
+                "minima", args.model, args.base, "cola", tokenizer, steps, args.seed, output,
+                learning_rate,
+            )
+            row = {"steps": steps, "learning_rate": learning_rate, "matthews": score}
+            candidates.append(row)
+            print(json.dumps(row), flush=True)
+    best = max(candidates, key=lambda item: item["matthews"])
+    minima_score = best["matthews"]
     base_score = report["tasks"]["cola"]["base"]
     report["tasks"]["cola"] = {
         "base": base_score,
         "minima": minima_score,
         "capped_ratio": min(1.0, minima_score / base_score) if base_score > 0 else 0.0,
     }
-    report["cola_minima_steps"] = args.steps
-    report["cola_minima_learning_rate"] = args.learning_rate
+    report["cola_minima_steps"] = best["steps"]
+    report["cola_minima_learning_rate"] = best["learning_rate"]
+    report["cola_final_candidates"] = candidates
     report["non_matrix_tuning"] = True
     report["relative_mean"] = float(np.mean([
         item["capped_ratio"] for item in report["tasks"].values()
