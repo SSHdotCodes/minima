@@ -105,6 +105,7 @@ class MinimaForSequenceClassification(nn.Module):
             group_size=group_size,
             recovery_rank=0,
             storage_format=metadata.get("storage_format", "i2_s"),
+            scale_storage=metadata.get("scale_storage", "fp16"),
         )
         packed.minima_metadata["base_revision"] = metadata.get("base_revision")
         packed.save_pretrained(output_dir, tokenizer)

@@ -32,6 +32,7 @@ class SpellDistillationConfig:
     learning_rate: float = 5e-5
     group_size: int = 32
     storage_format: str = "base3"
+    scale_storage: str = "fp16"
     recovery_rank: int = 128
     topk: int = 16
     eval_batches: int = 8
@@ -123,7 +124,8 @@ def distill_spellchecker(config: SpellDistillationConfig) -> dict:
     tokenizer = AutoTokenizer.from_pretrained(config.model, trust_remote_code=True)
     packed = MinimaModel.from_model(source, base_model=config.model, model_kind="spellchecker",
                                     group_size=config.group_size, recovery_rank=config.recovery_rank,
-                                    storage_format=config.storage_format)
+                                    storage_format=config.storage_format,
+                                    scale_storage=config.scale_storage)
     student = packed.model.to(device).train()
     trainable_count = enable_recovery_training(student)
     parameters = [parameter for parameter in student.parameters() if parameter.requires_grad]

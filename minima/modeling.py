@@ -20,11 +20,19 @@ from .modules import (
     TernaryLinear,
     optimize_cpu_model,
 )
-from .quantization import QuantizedWeight, base3_to_i2s, dequantize, i2s_to_base3
+from .quantization import (
+    QuantizedWeight,
+    base3_rowwise_to_i2s,
+    base3_to_i2s,
+    dequantize,
+    i2s_to_base3,
+    i2s_to_base3_rowwise,
+)
 from .spellcheck import patch_tied_vocab_projection
 
 FORMAT_VERSION = 1
-STORAGE_FORMATS = {"i2_s", "base3"}
+STORAGE_FORMATS = {"i2_s", "base3", "base3_rowwise"}
+SCALE_STORAGE_FORMATS = {"fp16", "uint8_rowwise"}
 
 
 def _storage_format(metadata: dict[str, Any]) -> str:
@@ -34,16 +42,73 @@ def _storage_format(metadata: dict[str, Any]) -> str:
     return value
 
 
+def _scale_storage_format(metadata: dict[str, Any]) -> str:
+    value = metadata.get("scale_storage", "fp16")
+    if value not in SCALE_STORAGE_FORMATS:
+        raise ValueError(f"unsupported Minima scale storage format {value!r}")
+    return value
+
+
+def _descriptor_padded_cols(descriptor: dict[str, Any]) -> int:
+    cols = descriptor.get("in_features", descriptor.get("embedding_dim"))
+    group_size = descriptor["group_size"]
+    return ((cols + group_size - 1) // group_size) * group_size
+
+
 def _transcode_packed_state(tensors: dict[str, torch.Tensor], metadata: dict[str, Any], *,
                             loading: bool) -> dict[str, torch.Tensor]:
     """Transcode compact checkpoint tensors without changing runtime modules."""
     if _storage_format(metadata) == "i2_s":
         return tensors
-    convert = base3_to_i2s if loading else i2s_to_base3
     for path, descriptor in metadata["modules"].items():
         key = f"{path}.packed_weight"
         if key in tensors:
-            tensors[key] = convert(tensors[key], descriptor["group_size"])
+            group_size = descriptor["group_size"]
+            if _storage_format(metadata) == "base3_rowwise":
+                tensors[key] = (
+                    base3_rowwise_to_i2s(
+                        tensors[key], _descriptor_padded_cols(descriptor), group_size,
+                    )
+                    if loading
+                    else i2s_to_base3_rowwise(tensors[key], group_size)
+                )
+            else:
+                convert = base3_to_i2s if loading else i2s_to_base3
+                tensors[key] = convert(tensors[key], group_size)
+    return tensors
+
+
+def _transcode_scale_state(tensors: dict[str, torch.Tensor], metadata: dict[str, Any], *,
+                           loading: bool) -> dict[str, torch.Tensor]:
+    """Compress FP16 group scales to per-row affine uint8 checkpoint tensors."""
+    if _scale_storage_format(metadata) == "fp16":
+        return tensors
+    for path in metadata["modules"]:
+        key = f"{path}.weight_scale"
+        quantized_key = f"{path}.weight_scale_q"
+        minimum_key = f"{path}.weight_scale_min"
+        step_key = f"{path}.weight_scale_step"
+        if loading:
+            if quantized_key not in tensors:
+                continue
+            quantized = tensors.pop(quantized_key).float()
+            minimum = tensors.pop(minimum_key).float().unsqueeze(-1)
+            step = tensors.pop(step_key).float().unsqueeze(-1)
+            tensors[key] = (minimum + quantized * step).half().contiguous()
+        elif key in tensors:
+            scale = tensors.pop(key).float()
+            minimum = scale.amin(dim=-1).half()
+            maximum = scale.amax(dim=-1)
+            step = ((maximum - minimum.float()) / 255.0).half()
+            denominator = step.float().unsqueeze(-1)
+            quantized = torch.where(
+                denominator > 0,
+                torch.round((scale - minimum.float().unsqueeze(-1)) / denominator),
+                torch.zeros_like(scale),
+            ).clamp_(0, 255).to(torch.uint8)
+            tensors[quantized_key] = quantized.contiguous()
+            tensors[minimum_key] = minimum.contiguous()
+            tensors[step_key] = step.contiguous()
     return tensors
 
 
@@ -237,9 +302,12 @@ class MinimaModel(nn.Module):
     @classmethod
     def from_model(cls, model: nn.Module, *, base_model: str, model_kind: str = "encoder",
                    group_size: int = 128, recovery_rank: int = 0,
-                   include_embeddings: bool = True, storage_format: str = "i2_s") -> "MinimaModel":
+                   include_embeddings: bool = True, storage_format: str = "i2_s",
+                   scale_storage: str = "fp16") -> "MinimaModel":
         if storage_format not in STORAGE_FORMATS:
             raise ValueError(f"unsupported Minima storage format {storage_format!r}")
+        if scale_storage not in SCALE_STORAGE_FORMATS:
+            raise ValueError(f"unsupported Minima scale storage format {scale_storage!r}")
         model, descriptors = pack_model(model, group_size, recovery_rank, include_embeddings)
         if model_kind == "spellchecker":
             patch_tied_vocab_projection(model)
@@ -247,9 +315,13 @@ class MinimaModel(nn.Module):
             "format_version": FORMAT_VERSION,
             "format": "i2_s",
             "storage_format": storage_format,
+            "scale_storage": scale_storage,
             "logical_weight_bits": 1.585,
             "physical_weight_bits": (
-                2 if storage_format == "i2_s" else 8 * ((group_size + 4) // 5) / group_size
+                2 if storage_format == "i2_s" else (
+                    1.6 if storage_format == "base3_rowwise"
+                    else 8 * ((group_size + 4) // 5) / group_size
+                )
             ),
             "runtime_weight_bits": 2,
             "activation_bits": 8,
@@ -290,6 +362,7 @@ class MinimaModel(nn.Module):
             setattr(parent, name, _empty_packed(descriptor))
         state = load_file(str(source / "model.safetensors"), device="cpu")
         state = _transcode_packed_state(state, metadata, loading=True)
+        state = _transcode_scale_state(state, metadata, loading=True)
         missing, unexpected = model.load_state_dict(state, strict=False, assign=True)
         if missing or unexpected:
             raise RuntimeError(f"artifact state mismatch: missing={missing}, unexpected={unexpected}")
@@ -335,6 +408,7 @@ class MinimaModel(nn.Module):
             )
             for name, value in self.model.state_dict().items()
         }
+        tensors = _transcode_scale_state(tensors, self.minima_metadata, loading=False)
         tensors = _transcode_packed_state(tensors, self.minima_metadata, loading=False)
         storage = _storage_format(self.minima_metadata)
         save_file(

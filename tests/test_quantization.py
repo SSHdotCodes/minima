@@ -2,14 +2,18 @@ import torch
 
 from minima.quantization import (
     QuantizedWeight,
+    base3_rowwise_to_i2s,
     base3_to_i2s,
     dequantize,
     fake_quantize_weight,
     i2s_to_base3,
+    i2s_to_base3_rowwise,
     pack_base3,
+    pack_base3_rowwise,
     pack_i2s,
     quantize_ternary,
     unpack_base3,
+    unpack_base3_rowwise,
     unpack_i2s,
 )
 
@@ -31,6 +35,17 @@ def test_base3_roundtrip_and_i2s_transcode_group32():
     torch.testing.assert_close(unpack_base3(packed, 96, 32), values)
     i2s = pack_i2s(values, 32)
     torch.testing.assert_close(base3_to_i2s(i2s_to_base3(i2s, 32), 32), i2s)
+
+
+def test_rowwise_base3_avoids_group16_byte_padding():
+    torch.manual_seed(12)
+    values = torch.randint(-1, 2, (7, 48), dtype=torch.int8)
+    packed = pack_base3_rowwise(values)
+    assert packed.shape == (7, 10)
+    torch.testing.assert_close(unpack_base3_rowwise(packed, 48), values)
+    i2s = pack_i2s(values, 16)
+    stored = i2s_to_base3_rowwise(i2s, 16)
+    torch.testing.assert_close(base3_rowwise_to_i2s(stored, 48, 16), i2s)
 
 
 def test_quantization_padding_and_dequantization():

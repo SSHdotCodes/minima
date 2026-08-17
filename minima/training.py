@@ -37,6 +37,7 @@ class DistillationConfig:
     warmup_steps: int = 200
     group_size: int = 128
     storage_format: str = "i2_s"
+    scale_storage: str = "fp16"
     recovery_rank: int = 0
     teacher_topk: int = 32
     hidden_loss_weight: float = 2.0
@@ -225,6 +226,7 @@ def distill(config: DistillationConfig) -> dict:
                 student_source, base_model=config.model, model_kind="encoder",
                 group_size=config.group_size, recovery_rank=config.recovery_rank,
                 storage_format=config.storage_format,
+                scale_storage=config.scale_storage,
             )
             student = packed_student.model.to(device)
     for name, parameter in student.named_parameters():
@@ -373,7 +375,8 @@ def distill(config: DistillationConfig) -> dict:
     if packed_student is None:
         model = MinimaModel.from_model(student.eval(), base_model=config.model, model_kind="encoder",
                                        group_size=config.group_size, recovery_rank=config.recovery_rank,
-                                       storage_format=config.storage_format)
+                                       storage_format=config.storage_format,
+                                       scale_storage=config.scale_storage)
     else:
         cast_recovery_parameters(student)
         packed_student.model = student.eval()

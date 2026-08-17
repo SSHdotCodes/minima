@@ -2,7 +2,11 @@ import torch
 import torch.nn as nn
 
 from minima.loading import encoder_from_mlm
-from minima.modeling import _materialize_derived_buffers, _transcode_packed_state
+from minima.modeling import (
+    _materialize_derived_buffers,
+    _transcode_packed_state,
+    _transcode_scale_state,
+)
 from minima.quantization import pack_i2s
 
 
@@ -48,6 +52,36 @@ def test_base3_checkpoint_state_expands_to_i2s_runtime():
     assert stored["projection.packed_weight"].shape == (3, 2, 7)
     restored = _transcode_packed_state(stored, metadata, loading=True)
     torch.testing.assert_close(restored["projection.packed_weight"], runtime)
+
+
+def test_rowwise_base3_and_uint8_scales_restore_runtime_state():
+    trits = torch.randint(-1, 2, (3, 48), dtype=torch.int8)
+    runtime = pack_i2s(trits, 16)
+    scales = torch.rand(3, 3, dtype=torch.float16) + 0.01
+    metadata = {
+        "storage_format": "base3_rowwise",
+        "scale_storage": "uint8_rowwise",
+        "modules": {
+            "projection": {
+                "kind": "linear",
+                "in_features": 48,
+                "out_features": 3,
+                "group_size": 16,
+            },
+        },
+    }
+    stored = {
+        "projection.packed_weight": runtime.clone(),
+        "projection.weight_scale": scales.clone(),
+    }
+    _transcode_scale_state(stored, metadata, loading=False)
+    _transcode_packed_state(stored, metadata, loading=False)
+    assert stored["projection.packed_weight"].shape == (3, 10)
+    assert stored["projection.weight_scale_q"].dtype == torch.uint8
+    _transcode_packed_state(stored, metadata, loading=True)
+    _transcode_scale_state(stored, metadata, loading=True)
+    torch.testing.assert_close(stored["projection.packed_weight"], runtime)
+    torch.testing.assert_close(stored["projection.weight_scale"], scales, rtol=3e-3, atol=3e-3)
 
 
 def test_cuda_artifacts_use_one_floating_runtime_dtype(monkeypatch, tmp_path):

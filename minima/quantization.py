@@ -168,6 +168,44 @@ def base3_to_i2s(packed: torch.Tensor, group_size: int) -> torch.Tensor:
     return pack_i2s(unpack_base3(packed, cols, group_size), group_size)
 
 
+def pack_base3_rowwise(trits: torch.Tensor) -> torch.Tensor:
+    """Pack five trits per byte across each full matrix row."""
+    if trits.ndim != 2:
+        raise ValueError("trits must be a 2D tensor")
+    rows, cols = trits.shape
+    codes = trits.to(torch.int16) + 1
+    if bool(((codes < 0) | (codes > 2)).any()):
+        raise ValueError("trits may only contain -1, 0, or +1")
+    bytes_per_row = (cols + 4) // 5
+    padded_cols = bytes_per_row * 5
+    if padded_cols != cols:
+        codes = torch.nn.functional.pad(codes, (0, padded_cols - cols), value=1)
+    powers = torch.tensor((1, 3, 9, 27, 81), dtype=torch.int16, device=codes.device)
+    return (codes.view(rows, bytes_per_row, 5) * powers).sum(dim=-1).to(torch.uint8).contiguous()
+
+
+def unpack_base3_rowwise(packed: torch.Tensor, cols: int) -> torch.Tensor:
+    """Unpack rowwise radix-3 bytes to exactly ``cols`` trits."""
+    if packed.ndim != 2 or packed.shape[1] != (cols + 4) // 5:
+        raise ValueError("rowwise packed shape and column count disagree")
+    if bool((packed > 242).any()):
+        raise ValueError("radix-3 bytes must be in the range 0..242")
+    work = packed.to(torch.int16)
+    digits = torch.stack(tuple((work // power) % 3 for power in (1, 3, 9, 27, 81)), dim=-1)
+    return digits.to(torch.int8).sub_(1).view(packed.shape[0], -1)[:, :cols].contiguous()
+
+
+def i2s_to_base3_rowwise(packed: torch.Tensor, group_size: int) -> torch.Tensor:
+    """Transcode grouped runtime I2_S into dense rowwise checkpoint storage."""
+    cols = packed.shape[1] * group_size
+    return pack_base3_rowwise(unpack_i2s(packed, cols, group_size))
+
+
+def base3_rowwise_to_i2s(packed: torch.Tensor, cols: int, group_size: int) -> torch.Tensor:
+    """Expand dense rowwise checkpoint storage into grouped runtime I2_S."""
+    return pack_i2s(unpack_base3_rowwise(packed, cols), group_size)
+
+
 def quantize_ternary(weight: torch.Tensor, group_size: int = 128,
                      scale: torch.Tensor | None = None) -> QuantizedWeight:
     trits, scale = ternary_values(weight, group_size, scale)

@@ -4,13 +4,17 @@ from .modeling import MinimaModel
 from .modules import PackedTernaryEmbedding, PackedTernaryLinear, TernaryEmbedding, TernaryLinear
 from .quantization import (
     QuantizedWeight,
+    base3_rowwise_to_i2s,
     base3_to_i2s,
     dequantize,
     i2s_to_base3,
+    i2s_to_base3_rowwise,
     pack_base3,
+    pack_base3_rowwise,
     pack_i2s,
     quantize_ternary,
     unpack_base3,
+    unpack_base3_rowwise,
     unpack_i2s,
 )
 
@@ -21,13 +25,17 @@ __all__ = [
     "QuantizedWeight",
     "TernaryEmbedding",
     "TernaryLinear",
+    "base3_rowwise_to_i2s",
     "base3_to_i2s",
     "dequantize",
     "i2s_to_base3",
+    "i2s_to_base3_rowwise",
     "pack_base3",
+    "pack_base3_rowwise",
     "pack_i2s",
     "quantize_ternary",
     "unpack_base3",
+    "unpack_base3_rowwise",
     "unpack_i2s",
 ]
 
